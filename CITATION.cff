@@ -5,6 +5,8 @@ type: software
 authors:
   - family-names: Hong
     given-names: Hanbin
+  - family-names: Wu
+    given-names: Shuang
   - family-names: Feng
     given-names: Shuya
   - family-names: Naderloui
@@ -13,8 +15,6 @@ authors:
     given-names: Shenao
   - family-names: Zhang
     given-names: Jingyu
-  - family-names: Liu
-    given-names: Biying
   - family-names: Arastehfard
     given-names: Ali
   - family-names: Huang
@@ -31,6 +31,8 @@ preferred-citation:
   authors:
     - family-names: Hong
       given-names: Hanbin
+    - family-names: Wu
+      given-names: Shuang
     - family-names: Feng
       given-names: Shuya
     - family-names: Naderloui
@@ -39,8 +41,6 @@ preferred-citation:
       given-names: Shenao
     - family-names: Zhang
       given-names: Jingyu
-    - family-names: Liu
-      given-names: Biying
     - family-names: Arastehfard
       given-names: Ali
     - family-names: Huang

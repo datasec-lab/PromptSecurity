@@ -19,7 +19,7 @@ If you use PromptSecurity, please cite:
 ```bibtex
 @misc{hong2025sokpromptsecurity,
   title = {SoK: Taxonomy and Evaluation of Prompt Security in Large Language Models},
-  author = {Hong, Hanbin and Feng, Shuya and Naderloui, Nima and Yan, Shenao and Zhang, Jingyu and Liu, Biying and Arastehfard, Ali and Huang, Heqing and Hong, Yuan},
+  author = {Hong, Hanbin and Wu, Shuang and Feng, Shuya and Naderloui, Nima and Yan, Shenao and Zhang, Jingyu and Arastehfard, Ali and Huang, Heqing and Hong, Yuan},
   year = {2025},
   eprint = {2510.15476},
   archivePrefix = {arXiv},
