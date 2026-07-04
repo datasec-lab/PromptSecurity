@@ -11,7 +11,8 @@ evaluation-result dataset under `dataset/promptsecurity_eval/`. See
 ## Paper and Artifacts
 
 - Paper: [SoK: Taxonomy and Evaluation of Prompt Security in Large Language Models](https://arxiv.org/abs/2510.15476)
-- Code and evaluation data: [datasec-lab/PromptSecurity](https://github.com/datasec-lab/PromptSecurity)
+- Code: [datasec-lab/PromptSecurity](https://github.com/datasec-lab/PromptSecurity)
+- Dataset: [youbin2014/JailbreakDB](https://huggingface.co/datasets/youbin2014/JailbreakDB)
 - Interactive leaderboard: [PromptSecurityLeaderboard](https://datasec-lab.github.io/PromptSecurityLeaderboard/)
 
 If you use PromptSecurity, please cite:

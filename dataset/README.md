@@ -5,6 +5,9 @@ PromptSecurity. It stores CSV measurements over configured
 `<model, attack, defense, dataset, judger>` tuples, together with run-level
 metadata and the selected prompt sample.
 
+The public Hugging Face release is available at
+<https://huggingface.co/datasets/youbin2014/JailbreakDB>.
+
 ## Contents
 
 The dataset is stored under `promptsecurity_eval/`.
