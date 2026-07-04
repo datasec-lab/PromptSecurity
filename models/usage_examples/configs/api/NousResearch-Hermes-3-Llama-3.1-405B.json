@@ -1,0 +1,11 @@
+{
+  "model_type": "api",
+  "model_name": "NousResearch/Hermes-3-Llama-3.1-405B",
+  "parameters": {
+    "max_tokens": 1024,
+    "temperature": 0.0
+  },
+  "init_parameters": {
+    "seed": 42
+  }
+}

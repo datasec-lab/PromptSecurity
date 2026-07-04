@@ -1,0 +1,12 @@
+{
+  "model_type": "api_doubao",
+  "model_name": "deepseek-r1-250528",
+  "parameters": {
+    "temperature": 0.0,
+    "max_tokens": 512
+  },
+  "init_parameters": {
+    "endpoint_url": "https://ark.cn-beijing.volces.com/api/v3",
+    "seed": 42
+  }
+}

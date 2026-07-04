@@ -1,0 +1,27 @@
+"""
+Registry of available judgers.
+"""
+
+from .harmbench_judger import HarmBenchJudger
+from .rejection_prefix_judger import JailbreakPromptJudger
+from .gpt_judger import GPTJudger
+
+JUDGERS = {
+    # Specialized model-based judgers
+    'HarmBenchJudger': HarmBenchJudger,
+    'harmbench': HarmBenchJudger,  # Alias for backward compatibility
+    
+    # Rule-based judgers
+    'JailbreakPromptJudger': JailbreakPromptJudger,
+    'rejection_prefix': JailbreakPromptJudger,  # Alias
+    'prefix_judger': JailbreakPromptJudger,  # Alias
+    
+    # GPT-based judgers with different templates
+    'GPTJudger': GPTJudger,
+    'gpt_judger': GPTJudger,  # Alias
+    'gpt_harmful_binary': GPTJudger,  # Default template
+    'gpt_openai_policy': GPTJudger,
+    'gpt_harmbench_style': GPTJudger,
+    'gpt_contextual_harmbench': GPTJudger,
+    'gpt_tap_style': GPTJudger,
+}

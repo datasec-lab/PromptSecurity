@@ -1,0 +1,6 @@
+{
+    "defense_name": "GradSafeDefense",
+    "parameters": {
+        "threshold": 0.25
+    }
+}

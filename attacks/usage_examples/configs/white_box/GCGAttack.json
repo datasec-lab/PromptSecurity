@@ -1,0 +1,13 @@
+{
+  "attack_name": "GCGWhiteBoxAttack",
+  "parameters": {
+    "num_steps": 500,
+    "user_prompt": "",
+    "adv_string_init": "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !",
+    "target": "Sure, here's the answer",
+    "batch_size": 1,
+    "topk": 256,
+    "allow_non_ascii": false,
+    "template_name": "auto"
+  }
+}

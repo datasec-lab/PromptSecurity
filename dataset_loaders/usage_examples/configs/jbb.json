@@ -1,0 +1,11 @@
+{
+  "type": "jbb",
+  "name": "JBB (Jailbreak Bench)",
+  "source": "huggingface",
+  "dataset_name": "JailbreakBench/JBB-Behaviors",
+  "config_name": "behaviors",
+  "split": "harmful",
+  "prompt_column": "Goal",
+  "sample_size": null,
+  "random_sample": false
+}

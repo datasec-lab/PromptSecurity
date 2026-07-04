@@ -1,0 +1,8 @@
+{
+  "type": "harmbench",
+  "name": "HarmBench",
+  "file_path": "path/to/harmbench_behaviors_text_all.csv",
+  "behavior_column": "Behavior",
+  "sample_size": 100,
+  "random_sample": true
+}

@@ -1,0 +1,7 @@
+{
+  "parameters": {
+    "model_name": "cais/HarmBench-Llama-2-13b-cls",
+    "device_map": "auto",
+    "trust_remote_code": true
+  }
+}

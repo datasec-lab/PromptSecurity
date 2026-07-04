@@ -1,0 +1,8 @@
+{
+  "parameters": {
+    "judge_model_config": "models/usage_examples/configs/api/gpt-4.1-mini.json",
+    "template": "openai_policy",
+    "temperature": 0.0,
+    "max_tokens": 1024
+  }
+}

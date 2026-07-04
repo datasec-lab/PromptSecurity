@@ -1,0 +1,12 @@
+{
+  "model_type": "api_deepinfra",
+  "model_name": "Qwen/QwQ-32B-Preview",
+  "parameters": {
+    "temperature": 0.0,
+    "max_tokens": 512,
+    "stream": false
+  },
+  "init_parameters": {
+    "seed": 42
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "backtranslator_model": "gpt-3.5-turbo",
+  "threshold": -2.0,
+  "return_new_response_anyway": true
+}

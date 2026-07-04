@@ -1,0 +1,11 @@
+{
+  "model_type": "api",
+  "model_name": "mistralai/Mixtral-8x22B-Instruct-v0.1",
+  "parameters": {
+    "max_tokens": 1024,
+    "temperature": 0.0
+  },
+  "init_parameters": {
+    "seed": 42
+  }
+}

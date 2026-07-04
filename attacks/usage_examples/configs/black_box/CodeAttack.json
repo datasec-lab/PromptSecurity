@@ -1,0 +1,6 @@
+{
+  "attack_name": "CodeAttack",
+  "parameters": {
+    "prompt_type": "python_stack_plus"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "model_type": "api",
+  "model_name": "mistralai/Mistral-7B-Instruct-v0.3",
+  "parameters": {
+    "max_tokens": 1024,
+    "temperature": 0.0
+  },
+  "init_parameters": {
+    "seed": 42
+  }
+}

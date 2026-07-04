@@ -1,0 +1,6 @@
+{
+  "defense_name": "InputFilterDefense",
+  "parameters": {
+    "forbidden_words": ["bomb", "kill"]
+  }
+}

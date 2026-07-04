@@ -1,0 +1,13 @@
+{
+  "defense_name": "no_defense",
+  "defense_type": "baseline",
+  "description": "No defense - baseline evaluation for model inherent safety",
+  "parameters": {
+    "enabled": false
+  },
+  "metadata": {
+    "purpose": "baseline_evaluation",
+    "phase": "phase1",
+    "created_for": "model_representative_assessment"
+  }
+}

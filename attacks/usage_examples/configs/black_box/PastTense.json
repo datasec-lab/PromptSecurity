@@ -1,0 +1,8 @@
+{
+    "attack_name": "PastTenseAttack",
+    "parameters": {
+        "assist_model_config": "models/usage_examples/configs/api/gpt-4o-mini.json",
+        "attack_type": "past",
+        "n_restarts": 5
+    }
+}

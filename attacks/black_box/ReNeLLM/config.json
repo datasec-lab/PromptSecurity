@@ -1,0 +1,10 @@
+{
+  "rewrite_model_config": "models/usage_examples/configs/api/gpt-4o-mini.json",
+  "judge_model_config": "models/usage_examples/configs/api/gpt-4o-mini.json",
+  "iter_max": 10,
+  "temperature": 0.0,
+  "max_tokens": 512,
+  "round_sleep": 1,
+  "fail_sleep": 1,
+  "retry_times": 20
+}

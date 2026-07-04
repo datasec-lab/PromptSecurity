@@ -1,0 +1,10 @@
+{
+  "attack_name": "ABJAttack",
+  "parameters": {
+    "attack_method": "original_ABJ",
+    "assist_model_config": "judgers/usage_examples/configs/gpt_judger_harmful_binary.json",
+    "dataset_dir": "./dataset/harmful_behaviors.csv",
+    "attack_rounds": 3,
+    "save_interval": 10
+  }
+}

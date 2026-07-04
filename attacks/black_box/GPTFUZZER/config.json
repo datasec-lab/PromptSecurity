@@ -1,0 +1,7 @@
+{
+  "mutate_model": "gpt-4o-mini",
+  "energy": 1,
+  "max_jailbreak": 1,
+  "max_query": 10,
+  "judge_model_config": "judgers/usage_examples/configs/gpt_judger_harmful_binary.json"
+}

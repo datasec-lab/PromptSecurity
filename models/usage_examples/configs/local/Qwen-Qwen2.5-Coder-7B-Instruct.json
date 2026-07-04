@@ -1,0 +1,16 @@
+{
+  "model_type": "local",
+  "model_name": "Qwen/Qwen2.5-Coder-7B-Instruct",
+  "init_parameters": {
+    "device": "cuda",
+    "torch_dtype": "auto",
+    "model_type": "causal",
+    "load_in_4bit": false,
+    "device_map": null
+  },
+  "parameters": {
+    "temperature": 0.0,
+    "max_new_tokens": 512,
+    "do_sample": false
+  }
+}

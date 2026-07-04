@@ -1,0 +1,4 @@
+{
+  "assist_model_config": "models/usage_examples/configs/api/gpt-4o-mini.json",
+  "taxonomy_path": "attacks/black_box/PersuasiveInContext/persuasion_taxonomy.jsonl"
+}

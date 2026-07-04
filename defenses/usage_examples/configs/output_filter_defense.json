@@ -1,0 +1,10 @@
+{
+  "defense_name": "OutputFilterDefense",
+  "parameters": {
+    "disallowed_phrases": [
+      "harmful", "dangerous", "illegal", "bomb", "weapon", 
+      "hack", "crack", "exploit", "malware", "virus"
+    ],
+    "placeholder": "I cannot provide information that could be harmful or dangerous."
+  }
+}

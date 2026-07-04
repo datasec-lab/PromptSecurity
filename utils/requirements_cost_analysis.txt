@@ -1,0 +1,14 @@
+# Requirements for Cost Analysis Scripts
+# =====================================
+
+# Core dependencies
+pandas>=1.5.0
+rich>=13.0.0
+numpy>=1.24.0
+
+# Optional dependencies (likely already installed in the project)
+# datasets>=2.0.0  # For HuggingFace dataset loading
+# requests>=2.25.0  # For API calls
+
+# Development/testing dependencies
+pytest>=7.0.0

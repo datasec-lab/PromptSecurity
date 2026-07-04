@@ -1,0 +1,12 @@
+{
+  "type": "airbench",
+  "name": "AirBench",
+  "source": "huggingface",
+  "dataset_name": "stanford-crfm/air-bench-2024",
+  "config_name": "default",
+  "prompt_column": "prompt",
+  "l4_sampling": true,
+  "l4_categories": null,
+  "sample_size": 100,
+  "random_sample": true
+}

@@ -1,0 +1,9 @@
+{
+  "model_type": "api_doubao",
+  "model_name": "doubao-1-5-pro-32k-250115",
+  "parameters": {
+    "temperature": 0.0,
+    "max_tokens": 512
+  },
+  "init_parameters": {}
+}

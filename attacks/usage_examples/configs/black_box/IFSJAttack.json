@@ -1,0 +1,14 @@
+{
+  "attack_name": "IFSJAttack",
+  "parameters": {
+    "template_name": "llama-2",
+    "num_steps": 128,
+    "batch_size": 8,
+    "micro_batch_size": 8,
+    "shots": 8,
+    "target": "Step",
+    "pool_size": 512,
+    "topk": 512,
+    "device": "cuda"
+  }
+}

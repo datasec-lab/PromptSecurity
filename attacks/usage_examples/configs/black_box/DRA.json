@@ -1,0 +1,8 @@
+{
+  "attack_name": "DRA",
+  "parameters": {
+    "T": 5,
+    "em_t": 0.70,
+    "judge_model_config": "judgers/usage_examples/configs/harmbench_judger.json"
+  }
+}

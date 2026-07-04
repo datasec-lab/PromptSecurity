@@ -1,0 +1,11 @@
+{
+  "model_type": "api",
+  "model_name": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+  "parameters": {
+    "max_tokens": 1024,
+    "temperature": 0.0
+  },
+  "init_parameters": {
+    "seed": 42
+  }
+}

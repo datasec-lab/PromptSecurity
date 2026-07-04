@@ -1,0 +1,53 @@
+{
+  "source_file": "data/sample_records/harmful_main.csv",
+  "released_as": "data/sample_records/harmful_main_parts/*.csv",
+  "reason": "Split into GitHub-safe CSV shards below 100 MB per file.",
+  "total_records": 167200,
+  "parts": [
+    {
+      "file": "data/sample_records/harmful_main_parts/part-000.csv",
+      "records": 16337,
+      "bytes": 94373712
+    },
+    {
+      "file": "data/sample_records/harmful_main_parts/part-001.csv",
+      "records": 16956,
+      "bytes": 94383760
+    },
+    {
+      "file": "data/sample_records/harmful_main_parts/part-002.csv",
+      "records": 21155,
+      "bytes": 94374974
+    },
+    {
+      "file": "data/sample_records/harmful_main_parts/part-003.csv",
+      "records": 20329,
+      "bytes": 94373768
+    },
+    {
+      "file": "data/sample_records/harmful_main_parts/part-004.csv",
+      "records": 21759,
+      "bytes": 94374876
+    },
+    {
+      "file": "data/sample_records/harmful_main_parts/part-005.csv",
+      "records": 18006,
+      "bytes": 94375030
+    },
+    {
+      "file": "data/sample_records/harmful_main_parts/part-006.csv",
+      "records": 17114,
+      "bytes": 94374348
+    },
+    {
+      "file": "data/sample_records/harmful_main_parts/part-007.csv",
+      "records": 20218,
+      "bytes": 94381909
+    },
+    {
+      "file": "data/sample_records/harmful_main_parts/part-008.csv",
+      "records": 15326,
+      "bytes": 74056517
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "mutator": "PL",
+  "number_of_variants": 8,
+  "threshold": 0.02,
+  "variant_save_dir": "./demo_case/variant",
+  "response_save_dir": "./demo_case/response"
+}

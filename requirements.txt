@@ -1,0 +1,14 @@
+openai
+anthropic
+transformers
+torch
+art
+litellm
+fastchat
+jailbreakbench
+detoxify
+textaugment==2.0.0
+textblob==0.17.1
+jellyfish==0.8.2
+sentence_transformers
+peft

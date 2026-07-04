@@ -1,0 +1,22 @@
+{
+  "sample_records": {
+    "format": "csv",
+    "unit": "one configured tuple evaluated on one sample",
+    "key": "record_id",
+    "notes": [
+      "Prompt text is linked by sample_index/sample_key and source metadata.",
+      "Rows with has_response=false preserve failed or incomplete attempts for auditability.",
+      "Complex configuration objects are stored as JSON strings."
+    ]
+  },
+  "run_records": {
+    "format": "csv",
+    "unit": "one experiment JSON/run file",
+    "key": "run_id"
+  },
+  "prompt_samples": {
+    "format": "csv",
+    "unit": "one selected balanced_challenge prompt",
+    "key": "index"
+  }
+}

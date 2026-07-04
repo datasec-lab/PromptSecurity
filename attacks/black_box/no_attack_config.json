@@ -1,0 +1,13 @@
+{
+  "attack_name": "no_attack",
+  "attack_type": "baseline",
+  "description": "No attack - baseline evaluation for refusal rate assessment",
+  "parameters": {
+    "enabled": false
+  },
+  "metadata": {
+    "purpose": "baseline_evaluation",
+    "phase": "phase1",
+    "created_for": "model_representative_assessment"
+  }
+}

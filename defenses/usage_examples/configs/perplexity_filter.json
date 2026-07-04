@@ -1,0 +1,11 @@
+{
+  "defense_name": "PerplexityFilter",
+  "parameters": {
+  "threshold": 0.5,
+  "window_size": 10,
+  "num_samples": 5,
+  "safe_msg": "Sorry, but I cannot assist with that."
+  }
+
+}
+

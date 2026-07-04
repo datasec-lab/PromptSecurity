@@ -1,0 +1,17 @@
+{
+  "model_type": "local",
+  "model_name": "mistralai/Mistral-7B-Instruct-v0.3",
+  "init_parameters": {
+    "device": "cuda",
+    "torch_dtype": "auto",
+    "model_type": "causal",
+    "load_in_4bit": true,
+    "device_map": "auto",
+    "trust_remote_code": true
+  },
+  "parameters": {
+    "temperature": 0.0,
+    "max_new_tokens": 512,
+    "do_sample": false
+  }
+}

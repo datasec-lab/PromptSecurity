@@ -1,0 +1,35 @@
+{
+  "export_name": "PromptSecurity-Eval",
+  "output_format": "csv",
+  "source_repository": "PromptSecurity",
+  "balanced_challenge_samples": 100,
+  "splits": [
+    {
+      "source_split": "harmful_main",
+      "source_dir": "experiments/placeholders",
+      "run_files": 1672,
+      "sample_records": 167200,
+      "completed_sample_records": 161849,
+      "records_with_response": 158287,
+      "completed_run_files": 1601
+    },
+    {
+      "source_split": "benign_utility",
+      "source_dir": "experiments/placeholders_utility",
+      "run_files": 92,
+      "sample_records": 9200,
+      "completed_sample_records": 9200,
+      "records_with_response": 9195,
+      "completed_run_files": 92
+    },
+    {
+      "source_split": "baseline_calibration",
+      "source_dir": "experiments/placeholders_phase1",
+      "run_files": 87,
+      "sample_records": 8700,
+      "completed_sample_records": 8700,
+      "records_with_response": 8557,
+      "completed_run_files": 87
+    }
+  ]
+}

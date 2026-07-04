@@ -1,0 +1,12 @@
+{
+  "model_type": "api_gemini",
+  "model_name": "gemini-1.5-pro",
+  "parameters": {
+    "temperature": 0.0,
+    "max_tokens": 512,
+    "top_k": 40
+  },
+  "init_parameters": {
+    "seed": 42
+  }
+}

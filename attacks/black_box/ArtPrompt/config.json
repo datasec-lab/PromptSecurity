@@ -1,0 +1,6 @@
+{
+  "assist_model_config": "models/usage_examples/configs/api/gpt-4o-mini.json",
+  "masking_direction": "horizontal",
+  "fontname": "cards",
+  "judge_model_config": "judgers/usage_examples/configs/gpt_judger_openai_policy.json"
+}

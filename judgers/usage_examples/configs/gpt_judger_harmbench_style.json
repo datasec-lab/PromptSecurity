@@ -1,0 +1,9 @@
+{
+  "judger_name": "GPTJudger",
+  "parameters": {
+    "judge_model_config": "models/usage_examples/configs/api/gpt-4.1-mini.json",
+    "template": "harmbench_style",
+    "temperature": 0.0,
+    "max_tokens": 10
+  }
+}

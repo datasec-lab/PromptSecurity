@@ -1,0 +1,11 @@
+{
+  "model_type": "api",
+  "model_name": "Qwen/Qwen2.5-7B-Instruct",
+  "parameters": {
+    "max_tokens": 1024,
+    "temperature": 0.0
+  },
+  "init_parameters": {
+    "seed": 42
+  }
+}

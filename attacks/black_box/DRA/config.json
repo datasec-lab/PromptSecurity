@@ -1,0 +1,5 @@
+{
+  "T": 5,
+  "em_t": 0.7,
+  "judge_model_config": "judgers/usage_examples/configs/harmbench_judger.json"
+}

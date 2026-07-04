@@ -1,0 +1,8 @@
+{
+    "attack_name": "InceptionAttack",
+    "parameters": {
+        "assist_model_config": "models/usage_examples/configs/api/gpt-4o-mini.json",
+        "exp_name": "main",
+        "defense": "none"
+    }
+}

@@ -1,0 +1,8 @@
+{
+  "defense_name": "SmoothLLM",
+  "parameters": {
+  "perturb_pct": 0.1,
+  "n": 10
+  }
+
+}

@@ -1,0 +1,8 @@
+{
+    "attack_name": "FlipAttack",
+    "parameters": {
+        "flip_mode": "FCW",
+        "cot": true,
+        "few_shot": true
+    }
+}

@@ -1,0 +1,13 @@
+{
+  "assist_model_config": "models/usage_examples/configs/api/gpt-4o-mini.json",
+  "languages": [
+    "es",
+    "fr"
+  ],
+  "templates": [
+    "template_1",
+    "template_2"
+  ],
+  "similarity_threshold": 0.85,
+  "do_back_translation": true
+}

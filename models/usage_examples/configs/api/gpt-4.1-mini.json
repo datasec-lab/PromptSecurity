@@ -1,0 +1,11 @@
+{
+  "model_type": "api_gpt",
+  "model_name": "gpt-4.1-mini",
+  "parameters": {
+    "max_tokens": 512,
+    "temperature": 0.0
+  },
+  "init_parameters": {
+    "seed": 42
+  }
+}

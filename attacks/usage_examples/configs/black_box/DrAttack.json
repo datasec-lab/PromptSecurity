@@ -1,0 +1,8 @@
+{
+    "attack_name": "DrAttackAttack",
+    "parameters": {
+        "parsing_model_config": "models/usage_examples/configs/api/gpt-4o-mini.json",
+        "synonym_model_config": "models/usage_examples/configs/api/gpt-4o-mini.json",
+        "max_attempts": 3
+    }
+}
