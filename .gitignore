@@ -44,3 +44,6 @@ demo_case/
 *.pt
 *.pth
 *.safetensors
+
+# Local API credentials (create from README "Setup: API keys"); never commit real keys
+models/api_keys.py

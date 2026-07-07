@@ -81,6 +81,25 @@ If you use PromptSecurity, please cite:
 Note: the CLI prints a short usage example block on every run. Use
 `--show-examples` if you only want that output and then exit.
 
+## Setup: API keys
+
+Local (Hugging Face) models run out of the box. To call **API models** (OpenAI, Anthropic,
+Google, DeepInfra, ByteDance/Doubao, …) you must create `models/api_keys.py` yourself — it is
+intentionally **not** shipped — exporting the constants the loaders import:
+
+```python
+# models/api_keys.py   (keep it private — never commit real keys)
+OPENAI_API_KEY      = "sk-..."
+ANTHROPIC_API_KEY   = "sk-ant-..."
+GEMINI_API_KEY      = "AIza..."
+DEEPINFRA_API_KEY   = "..."
+DOUBAO_API_KEY      = "..."
+HUGGINGFACE_API_KEY = "hf_..."   # only for gated/private HF models
+```
+
+Only the providers you actually use need real values; leave the rest as empty strings.
+The file is git-ignored so your keys never end up in a commit.
+
 ## Quick Start
 
 ```bash
