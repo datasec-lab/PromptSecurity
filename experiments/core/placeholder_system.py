@@ -36,6 +36,27 @@ class ExperimentPlaceholder:
         
         # 复用功能已简化 - 只支持judger并行执行
         # 不再使用复杂的result_reuse_manager
+
+    @staticmethod
+    def _max_sample_experiment_timestamp(sample_results: Optional[List[Dict[str, Any]]]) -> Optional[float]:
+        """Return the newest sample-level experiment timestamp when available."""
+        if not sample_results:
+            return None
+
+        timestamps = []
+        for result in sample_results:
+            if not isinstance(result, dict):
+                continue
+            value = result.get("experiment_timestamp")
+            try:
+                if value is not None:
+                    timestamps.append(float(value))
+            except (TypeError, ValueError):
+                continue
+
+        if not timestamps:
+            return None
+        return max(timestamps)
     
     def generate_experiment_id(self, config: Dict[str, Any]) -> str:
         """生成实验唯一ID
@@ -244,8 +265,15 @@ class ExperimentPlaceholder:
         return str(filepath)
     
     def _load_dataset_samples(self, config: Dict[str, Any], sample_limit: int = None) -> List[Dict[str, Any]]:
-        """加载数据集样本"""
+        """加载数据集样本（带内存缓存，避免同一配置重复加载）"""
         dataset_name = config.get("dataset", "harmbench")
+        seed = config.get("seed", 42)
+        cache_key = f"{dataset_name}_{sample_limit}_{seed}"
+
+        if not hasattr(self, "_dataset_sample_cache"):
+            self._dataset_sample_cache: Dict[str, List[Dict[str, Any]]] = {}
+        if cache_key in self._dataset_sample_cache:
+            return self._dataset_sample_cache[cache_key]
         
         try:
             from dataset_loaders import DatasetFactory
@@ -270,11 +298,29 @@ class ExperimentPlaceholder:
             elif dataset_name == 'airbench':
                 loader_config = {
                     'type': dataset_name,
-                    'source': 'huggingface', 
+                    'source': 'huggingface',
                     'dataset_name': 'stanford-crfm/air-bench-2024',
                     'config_name': 'default',
                     'prompt_column': 'prompt',
                     'sample_size': sample_limit if sample_limit else 100
+                }
+            elif dataset_name == 'mmlu':
+                loader_config = {
+                    'type': 'mmlu',
+                    'sample_size': sample_limit if sample_limit else 50,
+                    'seed': config.get('seed', 42),
+                }
+            elif dataset_name == 'truthfulqa':
+                loader_config = {
+                    'type': 'truthfulqa',
+                    'sample_size': sample_limit if sample_limit else 50,
+                    'seed': config.get('seed', 42),
+                }
+            elif dataset_name == 'utility_mcq':
+                loader_config = {
+                    'type': 'utility_mcq',
+                    'sample_size': sample_limit if sample_limit else 100,
+                    'seed': config.get('seed', 42),
                 }
             else:
                 # 未知数据集的回退配置
@@ -283,30 +329,44 @@ class ExperimentPlaceholder:
                     'file_path': f'dataset_loaders/data/{dataset_name}.csv',
                     'sample_size': sample_limit if sample_limit else 100
                 }
-            
+
             # 创建加载器并加载数据
             dataset_loader = DatasetFactory.create_loader(loader_config)
             prompt_strings = dataset_loader.load_prompts()
-            
+
+            # For loaders that provide rich per-sample metadata (e.g. MMLU,
+            # TruthfulQA), use that to populate original_data with correct
+            # answers and other fields needed by the utility judger.
+            rich_data = (
+                dataset_loader.get_sample_data()
+                if hasattr(dataset_loader, "get_sample_data")
+                else []
+            )
+
             # 转换为占位符格式
             converted_samples = []
             for i, prompt_str in enumerate(prompt_strings):
+                original_data = rich_data[i] if i < len(rich_data) else {
+                    "id": i,
+                    "dataset": dataset_name,
+                    "prompt": prompt_str,
+                    "source": "dataset_loader",
+                }
+                # expected_label carries the correct answer letter for MCQ
+                # datasets, and 1 (harmful) for security datasets.
+                expected_label = original_data.get("correct_answer", 1)
                 converted_sample = {
                     "sample_index": i,
                     "clean_prompt": prompt_str,
-                    "expected_label": 1,  # 假设所有prompt都是可能有害的
-                    "original_data": {
-                        "id": i,
-                        "dataset": dataset_name,
-                        "prompt": prompt_str,
-                        "source": "dataset_loader"
-                    }
+                    "expected_label": expected_label,
+                    "original_data": original_data,
                 }
                 converted_samples.append(converted_sample)
             
             logger.info(f"成功从数据集 {dataset_name} 加载 {len(converted_samples)} 个真实样本")
+            self._dataset_sample_cache[cache_key] = converted_samples
             return converted_samples
-            
+
         except Exception as dataset_error:
             logger.error(f"无法从数据集 {dataset_name} 加载样本: {dataset_error}")
             # 最后的回退：创建占位符样本，但不使用existing results
@@ -429,19 +489,25 @@ class ExperimentPlaceholder:
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
+            effective_status = status
+
             # 更新状态
-            data["status"] = status
+            data["status"] = effective_status
             data["last_updated"] = time.time()
             
             if sample_results:
                 data["results"] = sample_results
                 data["sample_results"] = sample_results  # 同时更新sample_results字段供dashboard使用
                 data["success_count"] = len([r for r in sample_results if r.get("status") == "success"])
-                data["failed_count"] = len(sample_results) - data["success_count"]
+                data["failed_count"] = len([r for r in sample_results if r.get("status") == "failed"])
                 data["successful_samples"] = data["success_count"]  # 更新successful_samples字段
                 data["failed_samples"] = data["failed_count"]  # 更新failed_samples字段
-                if status == "success" and data["success_count"] != len(sample_results):
-                    data["status"] = "completed"
+                latest_timestamp = self._max_sample_experiment_timestamp(sample_results)
+                if latest_timestamp is not None:
+                    data["experiment_timestamp"] = latest_timestamp
+                if effective_status == "success" and data["success_count"] != len(sample_results):
+                    effective_status = "completed"
+                    data["status"] = effective_status
             
             if error_info:
                 data["error"] = error_info
@@ -450,7 +516,7 @@ class ExperimentPlaceholder:
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
             
-            logger.info(f"更新占位符状态: {filename} -> {status}")
+            logger.info(f"更新占位符状态: {filename} -> {effective_status}")
             return True
             
         except Exception as e:
@@ -458,7 +524,8 @@ class ExperimentPlaceholder:
             return False
     
     def update_sample_result(self, config: Dict[str, Any], sample_index: int, 
-                           sample_result: Dict[str, Any]) -> bool:
+                           sample_result: Dict[str, Any],
+                           preserve_top_level_status: bool = False) -> bool:
         """实时更新单个样本结果（新的简化方法）
         
         Args:
@@ -489,6 +556,8 @@ class ExperimentPlaceholder:
                 f.seek(0)
                 data = json.load(f)
                 
+                original_status = data.get("status")
+
                 # 更新指定样本的结果
                 sample_results = data.get("sample_results", [])
                 if sample_index < len(sample_results):
@@ -496,9 +565,11 @@ class ExperimentPlaceholder:
                     
                     # 更新progress统计
                     self._update_progress_stats(data, sample_results)
+                    if preserve_top_level_status:
+                        data["status"] = original_status
                     
                     # 验证实验完成状态
-                    if data.get("status") == "complete":
+                    if not preserve_top_level_status and data.get("status") == "complete":
                         is_complete, error_msg = self.validate_experiment_completion(data)
                         if not is_complete:
                             logger.warning(f"实验状态验证失败: {error_msg}")
@@ -520,13 +591,19 @@ class ExperimentPlaceholder:
                     
         except ImportError:
             # 如果fcntl不可用（Windows），使用备用方法
-            return self._update_sample_result_fallback(config, sample_index, sample_result)
+            return self._update_sample_result_fallback(
+                config,
+                sample_index,
+                sample_result,
+                preserve_top_level_status=preserve_top_level_status,
+            )
         except Exception as e:
             logger.error(f"更新样本结果失败: {e}")
             return False
     
     def _update_sample_result_fallback(self, config: Dict[str, Any], sample_index: int, 
-                                     sample_result: Dict[str, Any]) -> bool:
+                                     sample_result: Dict[str, Any],
+                                     preserve_top_level_status: bool = False) -> bool:
         """备用的样本结果更新方法（无文件锁）"""
         exp_id = self.generate_experiment_id(config)
         filename = self.generate_placeholder_filename(config)
@@ -537,6 +614,8 @@ class ExperimentPlaceholder:
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
+            original_status = data.get("status")
+
             # 更新指定样本的结果
             sample_results = data.get("sample_results", [])
             if sample_index < len(sample_results):
@@ -544,6 +623,8 @@ class ExperimentPlaceholder:
                 
                 # 更新progress统计
                 self._update_progress_stats(data, sample_results)
+                if preserve_top_level_status:
+                    data["status"] = original_status
                 
                 # 更新时间戳
                 data["last_updated"] = time.time()
@@ -566,45 +647,49 @@ class ExperimentPlaceholder:
         """更新progress统计信息"""
         # 计算各种状态的样本数量
         total_samples = len(sample_results)
-        completed_samples = len([r for r in sample_results if r.get("status") == "success"])
+        successful_samples = len([r for r in sample_results if r.get("status") == "success"])
+        completed_non_success_samples = len([r for r in sample_results if r.get("status") == "completed"])
         failed_samples = len([r for r in sample_results if r.get("status") == "failed"])
         in_progress_samples = len([r for r in sample_results if r.get("status") == "in_progress"])
+        terminal_samples = successful_samples + completed_non_success_samples + failed_samples
         
         # 找到最后处理的样本索引
         last_processed_index = -1
         for i, result in enumerate(sample_results):
-            if result.get("status") in ["success", "failed"]:
+            if result.get("status") in ["success", "completed", "failed"]:
                 last_processed_index = i
         
         # 更新progress字段
         progress = {
             "total_samples": total_samples,
-            "completed_samples": completed_samples,
+            "completed_samples": terminal_samples,
+            "successful_samples": successful_samples,
+            "completed_non_success_samples": completed_non_success_samples,
             "failed_samples": failed_samples,
             "in_progress_samples": in_progress_samples,
             "last_processed_index": last_processed_index,
-            "completion_rate": completed_samples / total_samples if total_samples > 0 else 0.0
+            "completion_rate": terminal_samples / total_samples if total_samples > 0 else 0.0
         }
         
         data["progress"] = progress
         
         # 向后兼容：更新传统字段
-        data["successful_samples"] = completed_samples
+        data["successful_samples"] = successful_samples
         data["failed_samples"] = failed_samples
-        data["success_count"] = completed_samples
+        data["success_count"] = successful_samples
         data["failed_count"] = failed_samples
         
         # 更新整体实验状态
-        # 计算真正完成的样本（只有success或failed才算完成）
-        truly_completed = completed_samples + failed_samples
+        # 计算真正完成的样本（success/completed/failed 都算终态）
+        truly_completed = terminal_samples
         unfinished = total_samples - truly_completed
         
         if unfinished == 0:
-            # 所有样本都有终态（success或failed）
-            if completed_samples == 0 and failed_samples > 0:
+            # 所有样本都有终态（success/completed/failed）
+            if successful_samples == 0 and completed_non_success_samples == 0 and failed_samples > 0:
                 # 所有样本都失败了
                 data["status"] = "failed"
-            elif completed_samples > 0:
+            elif successful_samples > 0 or completed_non_success_samples > 0:
                 # 至少有一些样本成功，实验完成
                 data["status"] = "complete"
             else:
@@ -636,9 +721,11 @@ class ExperimentPlaceholder:
             
             sample_limit_key = f"limit_{sample_limit}"
             
+            effective_status = status
+
             # 更新sample-limit特定状态
             data["sample_limit_statuses"][sample_limit_key] = {
-                "status": status,
+                "status": effective_status,
                 "last_updated": time.time(),
                 "sample_count": sample_limit
             }
@@ -646,10 +733,16 @@ class ExperimentPlaceholder:
             if sample_results:
                 data["sample_limit_statuses"][sample_limit_key]["results"] = sample_results
                 success_count = len([r for r in sample_results if r.get("status") == "success"])
+                failed_count = len([r for r in sample_results if r.get("status") == "failed"])
                 data["sample_limit_statuses"][sample_limit_key]["success_count"] = success_count
-                data["sample_limit_statuses"][sample_limit_key]["failed_count"] = len(sample_results) - success_count
-                if status == "success" and success_count != len(sample_results):
-                    data["sample_limit_statuses"][sample_limit_key]["status"] = "completed"
+                data["sample_limit_statuses"][sample_limit_key]["failed_count"] = failed_count
+                latest_timestamp = self._max_sample_experiment_timestamp(sample_results)
+                if latest_timestamp is not None:
+                    data["sample_limit_statuses"][sample_limit_key]["experiment_timestamp"] = latest_timestamp
+                    data["experiment_timestamp"] = latest_timestamp
+                if effective_status == "success" and success_count != len(sample_results):
+                    effective_status = "completed"
+                    data["sample_limit_statuses"][sample_limit_key]["status"] = effective_status
             
             if error_info:
                 data["sample_limit_statuses"][sample_limit_key]["error"] = error_info
@@ -658,7 +751,7 @@ class ExperimentPlaceholder:
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
             
-            logger.info(f"更新sample-limit {sample_limit}状态: {filename} -> {status}")
+            logger.info(f"更新sample-limit {sample_limit}状态: {filename} -> {effective_status}")
             return True
             
         except Exception as e:
@@ -680,7 +773,7 @@ class ExperimentPlaceholder:
         
         # 检查所有样本状态
         statuses = [s.get("status") for s in sample_results]
-        terminal_statuses = ["success", "failed"]
+        terminal_statuses = ["success", "completed", "failed"]
         
         # 统计各种状态的样本数量
         non_terminal = [s for s in statuses if s not in terminal_statuses]
@@ -692,9 +785,10 @@ class ExperimentPlaceholder:
         
         # 检查数据完整性
         success_count = len([s for s in statuses if s == "success"])
+        completed_count = len([s for s in statuses if s == "completed"])
         failed_count = len([s for s in statuses if s == "failed"])
         
-        if success_count + failed_count != len(sample_results):
+        if success_count + completed_count + failed_count != len(sample_results):
             return False, "样本状态统计不一致"
         
         return True, None

@@ -21,6 +21,7 @@ JUDGER_CLASS_MAP = {
     'gpt_judger_harmful_binary': ('gpt_judger', 'GPTJudger'),
     'gpt_judger_openai_policy': ('gpt_judger', 'GPTJudger'),
     'gpt_judger_tap_style': ('gpt_judger', 'GPTJudger'),
+    'utility_judger': ('utility_judger', 'UtilityJudger'),
 }
 
 # Backward compatibility aliases (lower-cased and underscore normalized)

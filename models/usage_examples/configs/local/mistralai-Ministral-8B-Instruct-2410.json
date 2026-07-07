@@ -6,7 +6,8 @@
     "torch_dtype": "auto",
     "model_type": "causal",
     "load_in_4bit": false,
-    "device_map": null
+    "device_map": null,
+    "use_chat_template": true
   },
   "parameters": {
     "temperature": 0.0,

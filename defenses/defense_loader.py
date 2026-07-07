@@ -57,8 +57,8 @@ def load_defense_from_config(config_path: str, target_model, tokenizer=None):
     # Instantiate the model
     # Check if the defense requires tokenizer
     tokenizer_required_defenses = [
-        "BacktranslationDefendedModel", "SmoothLLMDefense", "PerplexityDefendedModel", 
-        "RobustOptDefendedModel", "PrimeGuardDefendedModel"
+        "BacktranslationDefendedModel", "SmoothLLMDefense",
+        "PrimeGuardDefendedModel"
     ]
     
     if defense_class.__name__ in tokenizer_required_defenses:

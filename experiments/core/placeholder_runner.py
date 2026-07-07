@@ -8,6 +8,8 @@
 import json
 import time
 import logging
+import gc
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -30,19 +32,47 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def parse_rerun_before_timestamp(value: Optional[str]) -> Optional[float]:
+    """Parse a CLI timestamp for timestamp-scoped reruns.
+
+    Supports Unix timestamps in seconds and ISO-8601 datetimes.
+    """
+    if value is None:
+        return None
+
+    raw_value = str(value).strip()
+    if not raw_value:
+        return None
+
+    try:
+        return float(raw_value)
+    except ValueError:
+        normalized = raw_value.replace("Z", "+00:00") if raw_value.endswith("Z") else raw_value
+        try:
+            return datetime.fromisoformat(normalized).timestamp()
+        except ValueError as exc:
+            raise ValueError(
+                f"无法解析 --force-rerun-before={value!r}。请传入 Unix 时间戳（秒）或 ISO 时间，例如 "
+                "'1776267979.6563125' 或 '2026-04-15T12:00:00'."
+            ) from exc
+
+
 class SmartPlaceholderRunner:
     """智能占位符实验执行器"""
     
     def __init__(self, placeholders_dir: str = "experiments/placeholders", seed: int = 42,
                  verbose: bool = False, max_length: int = 200, rerun_failed: bool = False,
-                 force_rerun: bool = False):
+                 rerun_completed: bool = False, force_rerun: bool = False,
+                 force_rerun_before: Optional[float] = None):
         self.placeholder_manager = ExperimentPlaceholder(placeholders_dir, seed)
         self.interface = PromptSecurityInterface()
         self.seed = seed
         self.verbose = verbose  # 控制详细输出
         self.max_length = max_length  # 文本显示最大长度
-        self.rerun_failed = rerun_failed  # 重跑除success以外的样本状态
+        self.rerun_failed = rerun_failed  # 重跑失败/待运行样本，跳过success/completed
+        self.rerun_completed = rerun_completed  # 重跑除success以外的样本状态（包含completed）
         self.force_rerun = force_rerun  # 强制重跑全部样本（包含success/completed）
+        self.force_rerun_before = force_rerun_before  # 仅重跑 experiment_timestamp 早于阈值的样本
         self._judger_cache = {}  # 缓存已加载的judger实例
         
         # 初始化模型缓存和显示组件
@@ -54,6 +84,39 @@ class SmartPlaceholderRunner:
         # 实验级defended model缓存，解决CUDA OOM问题
         self.experiment_defended_models = {}  # {cache_key: defended_model_info}
         self.current_experiment_id = None
+
+    def _release_cuda_memory(self, aggressive: bool = False):
+        """Best-effort CUDA cleanup to reduce fragmentation between phases."""
+        gc.collect()
+        if torch is not None and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            if aggressive:
+                try:
+                    torch.cuda.synchronize()
+                except Exception:
+                    pass
+
+    def _cleanup_runtime_component(self, component: Any, name: str = "component"):
+        """Release temporary model-like objects without touching the shared model cache."""
+        if component is None:
+            return
+
+        try:
+            if hasattr(component, "close"):
+                component.close()
+            elif hasattr(component, "model") and hasattr(component.model, "cpu"):
+                component.model.cpu()
+            elif hasattr(component, "judge_model") and hasattr(component.judge_model, "cpu"):
+                component.judge_model.cpu()
+        except Exception as e:
+            logger.warning(f"清理{name}失败: {e}")
+
+        self._release_cuda_memory()
+
+    @staticmethod
+    def _should_evict_judger_from_cache(judger_instance: Any) -> bool:
+        """Keep lightweight/API judgers cached, but release local heavy classifiers."""
+        return hasattr(judger_instance, "judge_model") or hasattr(judger_instance, "model")
     
     def _sanitize_error_message(self, error_msg: str) -> str:
         """清理错误消息以防止信息泄露"""
@@ -83,7 +146,8 @@ class SmartPlaceholderRunner:
     
     def run_single_experiment(self, config: Dict[str, Any], 
                             placeholder_data: Dict[str, Any] = None, 
-                            sample_limit: int = None, 
+                            sample_limit: int = None,
+                            selected_sample_indices: Optional[List[int]] = None,
                             progressive_saving: bool = True) -> Dict[str, Any]:
         """运行单个实验，支持实时保存和断点续传
         
@@ -106,12 +170,20 @@ class SmartPlaceholderRunner:
                     print("❌ 错误: 没有样本数据")
                 return {"status": "failed", "error": "没有样本数据"}
             
+            selected_index_set = set(selected_sample_indices or [])
+
             # 应用动态样本限制
             if sample_limit is not None and sample_limit > 0:
                 original_count = len(samples)
                 samples = samples[:sample_limit]
                 if self.verbose and len(samples) < original_count:
                     print(f"   📊 样本限制应用: {original_count} → {len(samples)} 个样本")
+
+            if selected_index_set:
+                max_valid_index = len(samples) - 1
+                selected_index_set = {idx for idx in selected_index_set if 0 <= idx <= max_valid_index}
+                if self.verbose:
+                    print(f"   🎯 精确样本选择: {sorted(selected_index_set)}")
             
             # 选择执行方式
             if progressive_saving:
@@ -119,11 +191,19 @@ class SmartPlaceholderRunner:
                 if self.verbose:
                     print("   🔄 使用实时保存模式")
                 
-                sample_results = self._execute_with_progressive_saving(config, placeholder_data, sample_limit)
+                sample_results = self._execute_with_progressive_saving(
+                    config,
+                    placeholder_data,
+                    sample_limit,
+                    selected_sample_indices=selected_index_set if selected_index_set else None,
+                )
                 
                 # 计算统计信息
                 success_count = len([r for r in sample_results if r.get("status") == "success"])
                 
+                # 先释放实验级defense对象，再清理模型缓存，避免GradSafe仍持有共享模型引用。
+                self._cleanup_experiment_cache()
+
                 # GPU显存清理：实验完成后清理所有模型显存
                 if hasattr(self, 'model_cache'):
                     try:
@@ -142,7 +222,9 @@ class SmartPlaceholderRunner:
                     "failed_samples": len(sample_results) - success_count,
                     "sample_results": sample_results,
                     "execution_time": sum(r.get("llm_response_time") or 0 for r in sample_results),
-                    "progressive_saving": True
+                    "progressive_saving": True,
+                    "selected_sample_indices": sorted(selected_index_set) if selected_index_set else None,
+                    "partial_sample_run": bool(selected_index_set),
                 }
             else:
                 # 使用传统的批量处理方法
@@ -169,6 +251,9 @@ class SmartPlaceholderRunner:
                 # 计算统计信息
                 success_count = len([r for r in sample_results if r.get("status") == "success"])
                 
+                # 先释放实验级defense对象，再清理模型缓存，避免GradSafe仍持有共享模型引用。
+                self._cleanup_experiment_cache()
+
                 # GPU显存清理：实验完成后清理所有模型显存
                 if hasattr(self, 'model_cache'):
                     try:
@@ -337,7 +422,8 @@ class SmartPlaceholderRunner:
         return all_results
     
     def _execute_with_progressive_saving(self, config: Dict[str, Any], placeholder_data: Dict[str, Any], 
-                                        sample_limit: int = None) -> List[Dict[str, Any]]:
+                                        sample_limit: int = None,
+                                        selected_sample_indices: Optional[set[int]] = None) -> List[Dict[str, Any]]:
         """带有断点续传和实时保存的样本处理方法"""
         
         # 获取样本数据
@@ -362,45 +448,32 @@ class SmartPlaceholderRunner:
         pending_samples = []
         
         for i, sample_result in enumerate(sample_results):
+            if selected_sample_indices is not None and i not in selected_sample_indices:
+                completed_samples.append(i)
+                continue
             status = sample_result.get("status")
 
-            # 强制重跑：所有样本都重新执行（包括success/completed）
-            if self.force_rerun:
+            if self._sample_needs_rerun(sample_result):
                 pending_samples.append(i)
-                continue
-
-            # 重跑非success：仅保留成功且有效的样本
-            if self.rerun_failed:
-                if status == "success":
-                    is_valid, _ = self._validate_sample_result(sample_result)
-                    if is_valid:
-                        completed_samples.append(i)
-                    else:
-                        pending_samples.append(i)
-                        if self.verbose:
-                            print(f"      ⚠️ 样本 {i} 标记为success但数据无效，将重新执行")
-                else:
-                    pending_samples.append(i)
-                continue
-
-            # 默认模式：success/completed 且有效则跳过，其余重跑
-            if status in {"success", "completed"}:
-                is_valid, _ = self._validate_sample_result(sample_result)
-                if is_valid:
-                    completed_samples.append(i)
-                else:
-                    pending_samples.append(i)
-                    if self.verbose:
-                        print(f"      ⚠️ 样本 {i} 标记为{status}但数据无效，将重新执行")
-            elif status in ["created", "failed", "error", "in_progress", "running", "pending", None]:
-                pending_samples.append(i)
-                if status == "in_progress":
-                    if self._check_stale_in_progress(sample_result):
-                        if self.verbose:
+                if self.verbose:
+                    if self.force_rerun:
+                        print(f"      🔁 样本 {i} 启用 force-rerun，将重新执行")
+                    elif self.force_rerun_before is not None and self._sample_needs_timestamp_rerun(sample_result):
+                        sample_timestamp = self._normalize_timestamp(sample_result.get("experiment_timestamp"))
+                        if sample_timestamp is None:
+                            print(f"      🔁 样本 {i} 缺少 experiment_timestamp，将按阈值策略重新执行")
+                        else:
+                            print(f"      🔁 样本 {i} 的 experiment_timestamp={sample_timestamp:.6f} 早于阈值 {self.force_rerun_before:.6f}，将重新执行")
+                    elif status == "in_progress":
+                        if self._check_stale_in_progress(sample_result):
                             print(f"      ⚠️ 样本 {i} 处于in_progress状态超时，将重新执行")
-                    else:
-                        if self.verbose:
+                        else:
                             print(f"      ⚠️ 样本 {i} 处于in_progress状态，将重新执行")
+                    elif status in {"success", "completed"}:
+                        print(f"      ⚠️ 样本 {i} 标记为{status}但需要重新执行")
+                continue
+
+            completed_samples.append(i)
         
         if self.verbose:
             print(f"   🔍 断点续传检测:")
@@ -437,7 +510,12 @@ class SmartPlaceholderRunner:
                 sample_result["status"] = "in_progress"
                 
                 # 实时保存状态更新
-                self.placeholder_manager.update_sample_result(config, sample_index, sample_result)
+                self.placeholder_manager.update_sample_result(
+                    config,
+                    sample_index,
+                    sample_result,
+                    preserve_top_level_status=selected_sample_indices is not None,
+                )
                 
                 # 执行样本处理
                 processed_result = self._execute_single_sample(config, sample, sample_index)
@@ -446,7 +524,12 @@ class SmartPlaceholderRunner:
                 all_results[sample_index] = processed_result
                 
                 # 实时保存完成的结果
-                success = self.placeholder_manager.update_sample_result(config, sample_index, processed_result)
+                success = self.placeholder_manager.update_sample_result(
+                    config,
+                    sample_index,
+                    processed_result,
+                    preserve_top_level_status=selected_sample_indices is not None,
+                )
                 
                 if self.verbose:
                     status_msg = "✅ 保存成功" if success else "❌ 保存失败"
@@ -467,7 +550,12 @@ class SmartPlaceholderRunner:
                 all_results[sample_index] = error_result
                 
                 # 保存失败状态
-                self.placeholder_manager.update_sample_result(config, sample_index, error_result)
+                self.placeholder_manager.update_sample_result(
+                    config,
+                    sample_index,
+                    error_result,
+                    preserve_top_level_status=selected_sample_indices is not None,
+                )
                 
                 if self.verbose:
                     import traceback
@@ -489,7 +577,8 @@ class SmartPlaceholderRunner:
             "clean_prompt": clean_prompt,
             "target_llm_name": config.get("model"),
             "target_llm_type": "api" if not self._is_local_model(config.get("model")) else "local",
-            "experiment_timestamp": time.time()
+            "experiment_timestamp": time.time(),
+            "original_data": sample.get("original_data", {}),
         }
         
         # === 4要素流程（防御优先） ===
@@ -501,6 +590,25 @@ class SmartPlaceholderRunner:
         
         # 2. 攻击处理: 针对defended_model进行攻击
         attacked_prompt = self._execute_attack_step_with_defense(config, clean_prompt, defended_model_info, result)
+
+        # 攻击失败时应显式保留失败状态，不能再回退到 clean_prompt 继续执行后续链路
+        if config.get("attack") != "no_attack" and result.get("attacked_prompt") is None:
+            attack_error = result.get("attack_error") or "攻击执行失败，未生成 attacked_prompt"
+            result.update({
+                "status": "failed",
+                "error": attack_error,
+                "judger_name": config.get("judger"),
+                "judger_config": {},
+                "judger_result": None,
+                "judger_individual_results": {},
+                "judger_fallback": False,
+                "judger_fallback_detail": {},
+            })
+
+            if self.verbose:
+                print(f"      ❌ 跳过模型响应与评判：{attack_error}")
+
+            return result
         
         # 3. 模型响应: defended_model 对 attacked_prompt 的响应
         final_response, response_info = self._execute_model_step(config, attacked_prompt, defended_model_info, result)
@@ -508,6 +616,35 @@ class SmartPlaceholderRunner:
         # 更新最终模型响应结果
         result.update(final_response)
         result.update(response_info)
+
+        # 如果上游模型/防御链路没有产出响应，不进入judger，直接保留真实失败原因
+        if result.get("llm_response") is None:
+            judger_stub = {
+                "judger_name": config.get("judger"),
+                "judger_config": {},
+                "judger_result": None,
+                "judger_individual_results": {},
+                "judger_fallback": False,
+                "judger_fallback_detail": {},
+            }
+            if result.get("assist_model_refused"):
+                result.update({
+                    "status": "completed",
+                    **judger_stub,
+                })
+                if self.verbose:
+                    print(f"      ⚠️  Assist model 拒绝生成 persona，使用 fallback attacked_prompt，标记为 completed")
+            else:
+                upstream_error = self._build_missing_response_error(result, defended_model_info)
+                result.update({
+                    "status": "failed",
+                    "error": upstream_error,
+                    **judger_stub,
+                })
+                if self.verbose:
+                    print(f"      ❌ 跳过评判：{upstream_error}")
+
+            return result
         
         # 4. 评判处理: 评估(attacked_prompt, defended_response)组合
         judger_result = self._execute_judger_step(config, attacked_prompt, result)
@@ -541,9 +678,16 @@ class SmartPlaceholderRunner:
         # 在4要素流程中，评判器评估(attacked_prompt, defended_response)组合
         is_multi_judger = judger_result.get("multi_judger_results", False)
         
-        # 根据attack和defense方法确定正确的评判结果字段
-        attack_method = config.get("attack", "no_attack")
-        defense_method = config.get("defense", "no_defense")
+        # 根据实际响应上下文确定正确的评判结果字段。
+        # 防御初始化失败时，config 里仍然可能是某个 defense，但实际响应已经回退成 direct。
+        response_context = result.get("response_context", {})
+        attack_method = response_context.get("attack_method", config.get("attack", "no_attack"))
+        is_defended_response = bool(result.get("is_defended_response"))
+        defense_method = (
+            response_context.get("defense_method", config.get("defense", "no_defense"))
+            if is_defended_response
+            else "no_defense"
+        )
         
         if is_multi_judger:
             # 多评判器：根据attack/defense组合选择正确的结果字段
@@ -573,15 +717,23 @@ class SmartPlaceholderRunner:
                 judger_individual_results = {}
         else:
             # 单评判器：根据attack/defense组合选择正确的结果字段
-            # 🔧 向后兼容：检查新格式和旧格式字段
+            # 🔧 向后兼容：检查新格式和旧格式字段，避免把 0 当作假值跳过
             if attack_method == "no_attack" and defense_method == "no_defense":
-                primary_result = judger_result.get("clean") or judger_result.get("judger_result_on_clean")
+                primary_result = judger_result.get("clean")
+                if primary_result is None:
+                    primary_result = judger_result.get("judger_result_on_clean")
             elif attack_method == "no_attack" and defense_method != "no_defense":
-                primary_result = judger_result.get("clean_defense") or judger_result.get("judger_result_on_clean_under_defense")
+                primary_result = judger_result.get("clean_defense")
+                if primary_result is None:
+                    primary_result = judger_result.get("judger_result_on_clean_under_defense")
             elif attack_method != "no_attack" and defense_method == "no_defense":
-                primary_result = judger_result.get("attack") or judger_result.get("judger_result_on_attack")
+                primary_result = judger_result.get("attack")
+                if primary_result is None:
+                    primary_result = judger_result.get("judger_result_on_attack")
             else:  # attack != "no_attack" and defense != "no_defense"
-                primary_result = judger_result.get("attack_defense") or judger_result.get("judger_result_on_attack_under_defense")
+                primary_result = judger_result.get("attack_defense")
+                if primary_result is None:
+                    primary_result = judger_result.get("judger_result_on_attack_under_defense")
             
             # 单评判器没有个体结果
             judger_individual_results = {}
@@ -608,9 +760,10 @@ class SmartPlaceholderRunner:
             "judger_fallback": judger_result.get("judger_fallback", False),
             "judger_fallback_detail": judger_result.get("judger_fallback_detail", {}),
             "judger_context": {
-                "attack_method": config.get("attack", "no_attack"),
-                "defense_method": config.get("defense", "no_defense"),
-                "evaluation_target": f"({config.get('attack', 'no_attack')}_prompt, {config.get('defense', 'no_defense')}_response)",
+                "attack_method": attack_method,
+                "defense_method": defense_method,
+                "requested_defense_method": config.get("defense", "no_defense"),
+                "evaluation_target": f"({attack_method}_prompt, {defense_method}_response)",
                 "is_multi_judger": is_multi_judger,
                 "aggregation_method": "average" if is_multi_judger and judger_individual_results else "single"
             }
@@ -654,6 +807,23 @@ class SmartPlaceholderRunner:
                 )
         
         return result
+
+    def _build_missing_response_error(self, result: Dict[str, Any], defended_model_info: Dict[str, Any]) -> str:
+        """为缺失模型响应构造更接近真实原因的错误信息。"""
+        fallback_events = result.get("defense_fallback_events") or []
+        if fallback_events:
+            return f"Model response unavailable before judging: {' | '.join(str(event) for event in fallback_events)}"
+
+        defense_error = defended_model_info.get("error") if isinstance(defended_model_info, dict) else None
+        if defense_error:
+            return f"Model response unavailable before judging: defense initialization failed: {defense_error}"
+
+        defense_name = result.get("defense_method", "unknown")
+        model_name = result.get("target_llm_name", "unknown")
+        return (
+            "Model response unavailable before judging: "
+            f"no response produced by model '{model_name}' under defense '{defense_name}'"
+        )
     
     def _execute_attack_step_with_defense(self, config: Dict[str, Any], clean_prompt: str, 
                                         defended_model_info: Dict[str, Any], result: Dict[str, Any]) -> str:
@@ -696,9 +866,10 @@ class SmartPlaceholderRunner:
                 "attack_method": attack_name,
                 "attack_runtime": attack_info.get("runtime", 0),
                 "attack_query_count": attack_info.get("query_count", 0),
-                "attack_config": attack_info.get("config", {})
+                "attack_config": attack_info.get("config", {}),
+                "assist_model_refused": attack_info.get("assist_refused", False),
             })
-            return attacked_prompt or clean_prompt
+            return attacked_prompt
     
     def _execute_defense_step(self, config: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
         """步骤1: 防御处理 - 创建defended_model"""
@@ -733,7 +904,8 @@ class SmartPlaceholderRunner:
         
         result.update({
             "defense_method": defended_model_info["defense_method"],
-            "defense_config": defended_model_info["defense_config"]
+            "defense_config": defended_model_info["defense_config"],
+            "requested_defense_method": defense_name,
         })
         return defended_model_info
     
@@ -746,7 +918,11 @@ class SmartPlaceholderRunner:
         if self.verbose:
             self.progress_display.show_model_response_step(model_name, defense_name, "执行中")
         
-        defense_fallback_info = {"fallback": False, "fallback_events": []}
+        defense_fallback_info = {
+            "fallback": bool(defended_model_info.get("fallback", False)),
+            "fallback_events": list(defended_model_info.get("fallback_events", [])),
+            "fallback_to_model": bool(defended_model_info.get("fallback_to_model", False)),
+        }
         if defended_model_info["is_defended"]:
             # 使用防御后的模型响应
             response, response_time, defense_fallback_info = self._get_defended_model_response(
@@ -887,6 +1063,11 @@ class SmartPlaceholderRunner:
         if result.get("judger_fallback") is not False:
             return False, "judger_fallback"
 
+        requested_defense = result.get("requested_defense_method") or result.get("defense_method")
+        actual_defense = result.get("defense_method")
+        if requested_defense and requested_defense != "no_defense" and actual_defense != requested_defense:
+            return False, f"defense_not_applied({requested_defense}->{actual_defense})"
+
         attacked_prompt = result.get("attacked_prompt")
         if not attacked_prompt:
             return False, "attacked_prompt_empty"
@@ -932,6 +1113,28 @@ class SmartPlaceholderRunner:
                 return True
 
         return False
+
+    def _derive_placeholder_status_from_samples(self, sample_results: List[Dict[str, Any]]) -> str:
+        """基于样本结果推导实验/样本限制的最终状态"""
+        if not sample_results:
+            return "failed"
+
+        statuses = [result.get("status") for result in sample_results if isinstance(result, dict)]
+        if not statuses or len(statuses) != len(sample_results):
+            return "failed"
+
+        success_count = sum(1 for status in statuses if status == "success")
+        failed_count = sum(1 for status in statuses if status == "failed")
+        completed_count = sum(1 for status in statuses if status == "completed")
+        terminal_count = success_count + failed_count + completed_count
+
+        if terminal_count != len(sample_results):
+            return "failed"
+        if success_count == len(sample_results):
+            return "success"
+        if failed_count == len(sample_results):
+            return "failed"
+        return "completed"
     
     def _is_local_model(self, model_name: str) -> bool:
         """判断是否是本地模型"""
@@ -1147,9 +1350,50 @@ class SmartPlaceholderRunner:
             "AutoDANAttack": "AutoDAN",
             "COLDAttack": "COLD",
             "IFSJAttack": "IFSJ",
+            "MultilingualJailbreakAttack": "MultilingualJailbreak",
         }
         return name_map.get(attack_name, attack_name)
-    
+
+    def _extract_attack_query_counts(self, attack_instance, attack_result) -> Tuple[int, int]:
+        query_count = getattr(attack_instance, "query_count", None)
+        assistant_query_count = getattr(attack_instance, "assistant_query_count", 0)
+
+        if isinstance(attack_result, tuple) and attack_result:
+            first_item = attack_result[0]
+            if isinstance(first_item, int):
+                query_count = first_item
+
+        if query_count is None:
+            query_count = 0
+
+        return query_count, assistant_query_count
+
+    def _is_attack_model_refusal_error(self, error: Exception) -> bool:
+        """Return True when the exception was caused by the attack model refusing
+        to generate an adversarial prompt (e.g. PAIR's attacker LLM has safety guardrails).
+        """
+        return "refused to generate adversarial prompt" in str(error)
+
+    def _build_refusal_fallback_info(
+        self,
+        attack_config_path: str,
+        attack_instance,
+        runtime: float,
+    ) -> Dict[str, Any]:
+        """Build attack_info for the clean-prompt fallback after an attack-model refusal."""
+        try:
+            with open(attack_config_path, "r", encoding="utf-8") as f:
+                attack_config = json.load(f)
+        except Exception:
+            attack_config = {}
+        return {
+            "runtime": runtime,
+            "query_count": getattr(attack_instance, "query_count", 0) if attack_instance else 0,
+            "assistant_query_count": 0,
+            "config": attack_config,
+            "attack_model_refused": True,   # flags that this sample fell back to clean_prompt
+        }
+
     def _validate_model_input(self, prompt) -> str:
         """
         验证和清理模型输入，确保为有效的字符串格式
@@ -1193,6 +1437,7 @@ class SmartPlaceholderRunner:
     def _execute_attack(self, config: Dict[str, Any], clean_prompt: str) -> Tuple[str, Dict[str, Any]]:
         """执行攻击"""
         attack_name = config.get("attack")
+        attack_instance = None
         
         if attack_name == "no_attack":
             return clean_prompt, {"runtime": 0, "query_count": 0, "assistant_query_count": 0}
@@ -1222,6 +1467,10 @@ class SmartPlaceholderRunner:
             # 执行攻击 - 调用攻击实例的attack方法
             attack_result = attack_instance.attack(clean_prompt)
             runtime = time.time() - start_time
+            query_count, assistant_query_count = self._extract_attack_query_counts(
+                attack_instance,
+                attack_result,
+            )
             
             # 标准化攻击输出格式：确保返回字符串
             attacked_prompt = self._normalize_attack_output(attack_result)
@@ -1229,17 +1478,33 @@ class SmartPlaceholderRunner:
             # 获取攻击配置信息（用于记录）
             with open(attack_config_path, 'r', encoding='utf-8') as f:
                 attack_config = json.load(f)
-            
+
+            assist_refused = getattr(attack_instance, 'assist_refused', False)
             attack_info = {
                 "runtime": runtime,
-                "query_count": 1,  # 简化：假设一次查询
-                "assistant_query_count": 0,  # 简化：需要根据攻击类型确定
-                "config": attack_config
+                "query_count": query_count,
+                "assistant_query_count": assistant_query_count,
+                "config": attack_config,
+                "assist_refused": assist_refused,
             }
-            
+
             return attacked_prompt, attack_info
-            
+
         except Exception as e:
+            # Attack-model refusal: fall back to clean_prompt instead of marking failed.
+            if self._is_attack_model_refusal_error(e):
+                self.progress_display.show_component_execution(
+                    "attack", attack_name, "警告", f"Attack model 拒绝生成，回退到 clean_prompt"
+                )
+                if self.verbose:
+                    print(f"⚠️  Attack model 拒绝，回退到 clean_prompt: {e}")
+                fallback_info = self._build_refusal_fallback_info(
+                    locals().get("attack_config_path", ""),
+                    attack_instance,
+                    time.time() - locals().get("start_time", time.time()),
+                )
+                return clean_prompt, fallback_info
+
             # 总是显示攻击失败信息
             self.progress_display.show_component_execution(
                 "attack", attack_name, "错误", f"失败: {str(e)}"
@@ -1251,11 +1516,14 @@ class SmartPlaceholderRunner:
             error_result = create_error_result("attack", attack_name, str(e))
             # 攻击失败时不返回attacked_prompt，返回None
             return None, error_result
-    
-    def _execute_attack_against_defended_model(self, config: Dict[str, Any], clean_prompt: str, 
+        finally:
+            self._cleanup_runtime_component(attack_instance, f"attack:{attack_name}")
+
+    def _execute_attack_against_defended_model(self, config: Dict[str, Any], clean_prompt: str,
                                               defended_model_info: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         """执行攻击 - 针对防御后的模型"""
         attack_name = config.get("attack")
+        attack_instance = None
         
         if attack_name == "no_attack":
             return clean_prompt, {"runtime": 0, "query_count": 0, "assistant_query_count": 0}
@@ -1300,6 +1568,10 @@ class SmartPlaceholderRunner:
             # 执行攻击 - 调用攻击实例的attack方法
             attack_result = attack_instance.attack(clean_prompt)
             runtime = time.time() - start_time
+            query_count, assistant_query_count = self._extract_attack_query_counts(
+                attack_instance,
+                attack_result,
+            )
             
             # 标准化攻击输出格式：确保返回字符串
             attacked_prompt = self._normalize_attack_output(attack_result)
@@ -1307,17 +1579,33 @@ class SmartPlaceholderRunner:
             # 获取攻击配置信息
             with open(attack_config_path, 'r', encoding='utf-8') as f:
                 attack_config = json.load(f)
-            
+
+            assist_refused = getattr(attack_instance, 'assist_refused', False)
             attack_info = {
                 "runtime": runtime,
-                "query_count": 1,  # 简化：假设一次查询
-                "assistant_query_count": 0,  # 简化：需要根据攻击类型确定
-                "config": attack_config
+                "query_count": query_count,
+                "assistant_query_count": assistant_query_count,
+                "config": attack_config,
+                "assist_refused": assist_refused,
             }
-            
+
             return attacked_prompt, attack_info
-            
+
         except Exception as e:
+            # Attack-model refusal: fall back to clean_prompt instead of marking failed.
+            if self._is_attack_model_refusal_error(e):
+                self.progress_display.show_component_execution(
+                    "attack", attack_name, "警告", f"Attack model 拒绝生成，回退到 clean_prompt"
+                )
+                if self.verbose:
+                    print(f"⚠️  Attack model 拒绝，回退到 clean_prompt: {e}")
+                fallback_info = self._build_refusal_fallback_info(
+                    locals().get("attack_config_path", ""),
+                    attack_instance,
+                    time.time() - locals().get("start_time", time.time()),
+                )
+                return clean_prompt, fallback_info
+
             # 总是显示攻击失败信息
             self.progress_display.show_component_execution(
                 "attack", attack_name, "错误", f"失败: {str(e)}"
@@ -1329,7 +1617,9 @@ class SmartPlaceholderRunner:
             error_result = create_error_result("attack", attack_name, str(e))
             # 攻击失败时不返回attacked_prompt，返回None
             return None, error_result
-    
+        finally:
+            self._cleanup_runtime_component(attack_instance, f"attack:{attack_name}")
+
     def _check_stale_in_progress(self, sample_result: Dict[str, Any], timeout_minutes: int = 30) -> bool:
         """检测卡住的in_progress样本
         
@@ -1351,7 +1641,134 @@ class SmartPlaceholderRunner:
         # 计算时间差
         time_diff = time.time() - last_update
         return time_diff > timeout_minutes * 60
-    
+
+    @staticmethod
+    def _normalize_timestamp(value: Any) -> Optional[float]:
+        """Normalize stored timestamps to floats when possible."""
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _sample_needs_timestamp_rerun(self, sample_result: Dict[str, Any]) -> bool:
+        """Whether this sample should rerun because it is older than the threshold."""
+        if self.force_rerun_before is None:
+            return False
+
+        sample_timestamp = self._normalize_timestamp(sample_result.get("experiment_timestamp"))
+        if sample_timestamp is None:
+            return True
+        return sample_timestamp < self.force_rerun_before
+
+    def _sample_needs_rerun_for_failed_mode(self, sample_result: Dict[str, Any]) -> bool:
+        """`--rerun-failed`: rerun non-terminal samples and invalid terminal samples."""
+        status = sample_result.get("status")
+        if status in {"success", "completed"}:
+            is_valid, _ = self._validate_sample_result(sample_result)
+            return not is_valid
+        return True
+
+    def _sample_needs_rerun_for_completed_mode(self, sample_result: Dict[str, Any]) -> bool:
+        """`--rerun-completed`: keep only valid success samples."""
+        status = sample_result.get("status")
+        if status == "success":
+            is_valid, _ = self._validate_sample_result(sample_result)
+            return not is_valid
+        return True
+
+    def _sample_needs_rerun(self, sample_result: Dict[str, Any]) -> bool:
+        """Centralized rerun decision for a single sample under the active CLI flags."""
+        if self.force_rerun:
+            return True
+
+        special_rerun_modes = []
+        if self.force_rerun_before is not None:
+            special_rerun_modes.append(self._sample_needs_timestamp_rerun(sample_result))
+        if self.rerun_completed:
+            special_rerun_modes.append(self._sample_needs_rerun_for_completed_mode(sample_result))
+        if self.rerun_failed:
+            special_rerun_modes.append(self._sample_needs_rerun_for_failed_mode(sample_result))
+
+        if special_rerun_modes:
+            return any(special_rerun_modes)
+
+        status = sample_result.get("status")
+        if status in {"success", "completed"}:
+            is_valid, _ = self._validate_sample_result(sample_result)
+            return not is_valid
+        return True
+
+    @staticmethod
+    def _select_sample_results_for_scope(
+        sample_results: List[Dict[str, Any]],
+        sample_limit: Optional[int] = None,
+        selected_sample_indices: Optional[List[int]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Scope sample results to the exact subset the current run cares about."""
+        scoped_results = sample_results[:sample_limit] if sample_limit is not None and sample_limit > 0 else list(sample_results)
+        if selected_sample_indices is None:
+            return scoped_results
+
+        selected_index_set = set(selected_sample_indices)
+        return [
+            result for idx, result in enumerate(scoped_results)
+            if idx in selected_index_set
+        ]
+
+    def _has_rerunnable_samples(
+        self,
+        sample_results: List[Dict[str, Any]],
+        sample_limit: Optional[int] = None,
+        selected_sample_indices: Optional[List[int]] = None,
+    ) -> bool:
+        """Whether the current scope contains at least one sample that should rerun."""
+        scoped_results = self._select_sample_results_for_scope(
+            sample_results,
+            sample_limit=sample_limit,
+            selected_sample_indices=selected_sample_indices,
+        )
+        if selected_sample_indices is not None and not scoped_results:
+            return False
+        if not scoped_results:
+            return True
+
+        return any(self._sample_needs_rerun(result) for result in scoped_results)
+
+    def placeholder_needs_rerun(
+        self,
+        placeholder_file: str,
+        sample_limit: Optional[int] = None,
+        selected_sample_indices: Optional[List[int]] = None,
+    ) -> bool:
+        """Cheap pre-check used by the CLI to avoid queueing placeholders that will be skipped."""
+        with open(placeholder_file, 'r', encoding='utf-8') as f:
+            placeholder_data = json.load(f)
+
+        partial_sample_run = bool(selected_sample_indices)
+
+        if self.force_rerun:
+            return True
+
+        if sample_limit is not None and not partial_sample_run:
+            sample_limit_statuses = placeholder_data.get("sample_limit_statuses", {})
+            sample_limit_key = f"limit_{sample_limit}"
+            sample_limit_entry = sample_limit_statuses.get(sample_limit_key, "pending")
+            sample_results = None
+            if isinstance(sample_limit_entry, dict):
+                sample_results = sample_limit_entry.get("results")
+            if sample_results is None:
+                sample_results = placeholder_data.get("sample_results", [])
+            return self._has_rerunnable_samples(sample_results, sample_limit=sample_limit)
+
+        sample_results = placeholder_data.get("sample_results", [])
+        return self._has_rerunnable_samples(
+            sample_results,
+            sample_limit=sample_limit,
+            selected_sample_indices=selected_sample_indices,
+        )
+
     def _get_model_response(self, model_name: str, prompt: str, config: Dict[str, Any]) -> Tuple[str, float]:
         """获取模型响应"""
         max_retries = 3
@@ -1594,7 +2011,14 @@ class SmartPlaceholderRunner:
                 
                 # Defensive programming: Validate multi-judger result structure
                 if successful_judges == 0:
-                    error_msg = "All judges failed to produce valid results"
+                    response_missing = (
+                        results.get("llm_response") is None
+                        and all(reason == "no_valid_results" for reason in failure_reasons)
+                    )
+                    if response_missing:
+                        error_msg = self._build_missing_response_error(results, {})
+                    else:
+                        error_msg = "All judges failed to produce valid results"
                     logger.warning(error_msg)
                     if self.verbose:
                         print(f"       ❌ 所有评判器失败，成功数量: {successful_judges}")
@@ -1654,6 +2078,8 @@ class SmartPlaceholderRunner:
     
     def _single_judge_evaluate(self, judger_name: str, results: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
         """单个评判器评估"""
+        judger_instance = None
+        cache_key = None
         try:
             # 使用新的加载器系统检查评判器
             from judgers.judger_loader import get_available_judgers
@@ -1734,7 +2160,13 @@ class SmartPlaceholderRunner:
             
             # 使用映射后的results进行评判
             results = results_with_legacy_fields
-            
+
+            # 从样本元数据中提取正确答案（供 utility_judger 等使用）
+            _meta = results.get("sample_metadata") or results.get("original_data") or {}
+            _judge_extra = {}
+            if _meta.get("correct_answer"):
+                _judge_extra["correct_answer"] = _meta["correct_answer"]
+
             # 评判clean响应（包含空字符串）
             if results.get("llm_response_on_clean") is not None:
                 if self.verbose:
@@ -1748,7 +2180,8 @@ class SmartPlaceholderRunner:
                     
                     clean_result = judger_instance.judge(
                         behavior=results.get("clean_prompt", ""),
-                        generation=results.get("llm_response_on_clean")
+                        generation=results.get("llm_response_on_clean"),
+                        **_judge_extra
                     )
                     
                     
@@ -1777,7 +2210,8 @@ class SmartPlaceholderRunner:
                     
                     attack_result = judger_instance.judge(
                         behavior=results.get("attacked_prompt", ""),
-                        generation=results.get("llm_response_on_attacked")
+                        generation=results.get("llm_response_on_attacked"),
+                        **_judge_extra
                     )
                     
                     
@@ -1804,7 +2238,8 @@ class SmartPlaceholderRunner:
                     
                     clean_defense_result = judger_instance.judge(
                         behavior=results.get("clean_prompt", ""),
-                        generation=results.get("llm_response_on_clean_under_defense")
+                        generation=results.get("llm_response_on_clean_under_defense"),
+                        **_judge_extra
                     )
                     
                     
@@ -1826,7 +2261,8 @@ class SmartPlaceholderRunner:
                     
                     attack_defense_result = judger_instance.judge(
                         behavior=results.get("attacked_prompt", ""),
-                        generation=results.get("llm_response_on_attacked_under_defense")
+                        generation=results.get("llm_response_on_attacked_under_defense"),
+                        **_judge_extra
                     )
                     
                     
@@ -1860,6 +2296,10 @@ class SmartPlaceholderRunner:
                 "attack_defense": None,
                 "config": None
             }
+        finally:
+            if cache_key and judger_instance and self._should_evict_judger_from_cache(judger_instance):
+                self._judger_cache.pop(cache_key, None)
+                self._cleanup_runtime_component(judger_instance, f"judger:{judger_name}")
     
     def _format_judger_error(self, error: Exception) -> str:
         """格式化评判器错误信息"""
@@ -2218,7 +2658,10 @@ class SmartPlaceholderRunner:
                 "defense_instance": defense_instance,  # 返回实例而非函数
                 "model_name": config.get("model"),
                 "model_parameters": target_model_parameters,
-                "is_defended": True
+                "is_defended": True,
+                "fallback": False,
+                "fallback_events": [],
+                "fallback_to_model": False,
             }
             
         except Exception as e:
@@ -2229,7 +2672,10 @@ class SmartPlaceholderRunner:
                 "defense_instance": None,
                 "model_name": config.get("model"),
                 "is_defended": False,
-                "error": str(e)
+                "error": str(e),
+                "fallback": True,
+                "fallback_events": [f"defense_init_error: {e}"],
+                "fallback_to_model": True,
             }
     
     def _get_defended_model_response(self, defended_model_info: Dict[str, Any], 
@@ -2246,11 +2692,14 @@ class SmartPlaceholderRunner:
             if defense_instance is None:
                 raise ValueError("防御实例为空")
             
+            # 透传底层模型参数，确保 defense 路径也遵守 token 上限等配置。
+            model_parameters = defended_model_info.get("model_parameters", {}) or {}
+
             # 调用防御实例的generate方法获取响应
             start_time = time.time()
             if hasattr(defense_instance, "clear_fallback_events"):
                 defense_instance.clear_fallback_events()
-            defended_response = defense_instance.generate(prompt)
+            defended_response = defense_instance.generate(prompt, **model_parameters)
             response_time = time.time() - start_time
             fallback_events = []
             if hasattr(defense_instance, "get_fallback_events"):
@@ -2376,7 +2825,12 @@ class SmartPlaceholderRunner:
                 else:
                     print(f"       ⚠️ 复用judger结果为空，无相关键")
     
-    def run_placeholder_experiment(self, placeholder_file: str, sample_limit: int = None) -> Dict[str, Any]:
+    def run_placeholder_experiment(
+        self,
+        placeholder_file: str,
+        sample_limit: int = None,
+        selected_sample_indices: Optional[List[int]] = None,
+    ) -> Dict[str, Any]:
         """运行单个占位符实验
         
         Args:
@@ -2390,83 +2844,69 @@ class SmartPlaceholderRunner:
             
             config = placeholder_data.get("config", {})
             status = placeholder_data.get("status", "pending")
-            
-            # 检查sample-limit特定的完成状态
-            if sample_limit is not None:
-                # 为不同sample-limit维护独立状态
-                sample_limit_statuses = placeholder_data.get("sample_limit_statuses", {})
-                sample_limit_key = f"limit_{sample_limit}"
-                sample_limit_entry = sample_limit_statuses.get(sample_limit_key, "pending")
-                if isinstance(sample_limit_entry, dict):
-                    sample_limit_status = sample_limit_entry.get("status", "pending")
-                else:
-                    sample_limit_status = sample_limit_entry
+            partial_sample_run = bool(selected_sample_indices)
 
-                if self.force_rerun:
-                    if self.verbose:
+            if self.force_rerun:
+                if self.verbose:
+                    if sample_limit is not None and not partial_sample_run:
                         print(f"🔁 强制重跑样本限制 {sample_limit}: {placeholder_file}")
-                elif sample_limit_status == "success":
-                    if not self.rerun_failed:
-                        if self.verbose:
-                            print(f"⏭️ 样本限制 {sample_limit} 的实验已完成，跳过: {placeholder_file}")
-                        return {"status": "skipped", "reason": f"already_completed_for_limit_{sample_limit}"}
-
-                    results = None
-                    if isinstance(sample_limit_entry, dict):
-                        results = sample_limit_entry.get("results")
-                    if results is None:
-                        results = placeholder_data.get("sample_results", [])
-                    if results:
-                        results = results[:sample_limit]
-
-                    if not self._has_incomplete_samples(results, rerun_non_success=self.rerun_failed):
-                        if self.verbose:
-                            print(f"⏭️ 样本限制 {sample_limit} 的实验无需重跑样本，跳过: {placeholder_file}")
-                        return {"status": "skipped", "reason": f"already_completed_for_limit_{sample_limit}"}
-                    if self.verbose:
-                        print(f"🔁 样本限制 {sample_limit} 的实验存在可重跑样本，继续运行: {placeholder_file}")
-            else:
-                # 传统完整实验检查
-                if self.force_rerun:
-                    if self.verbose:
+                    else:
                         print(f"🔁 强制重跑实验: {placeholder_file}")
-                elif status == "success":
-                    if not self.rerun_failed:
-                        if self.verbose:
-                            print(f"⏭️ 实验已完成，跳过: {placeholder_file}")
-                        return {"status": "skipped", "reason": "already_completed"}
-
-                    sample_results = placeholder_data.get("sample_results", [])
-                    if not self._has_incomplete_samples(sample_results, rerun_non_success=self.rerun_failed):
-                        if self.verbose:
-                            print(f"⏭️ 实验已完成且无需重跑样本，跳过: {placeholder_file}")
-                        return {"status": "skipped", "reason": "already_completed"}
-                    if self.verbose:
-                        print(f"🔁 实验存在可重跑样本，继续运行: {placeholder_file}")
+            elif not self.placeholder_needs_rerun(
+                placeholder_file,
+                sample_limit=sample_limit,
+                selected_sample_indices=selected_sample_indices,
+            ):
+                if self.verbose:
+                    if partial_sample_run:
+                        print(f"⏭️ 选中的样本无需重跑，跳过: {placeholder_file}")
+                    elif sample_limit is not None:
+                        print(f"⏭️ 样本限制 {sample_limit} 的实验无需重跑，跳过: {placeholder_file}")
+                    elif status == "success":
+                        print(f"⏭️ 实验已完成且无需重跑样本，跳过: {placeholder_file}")
+                    else:
+                        print(f"⏭️ 当前占位符在所选策略下无需执行，跳过: {placeholder_file}")
+                if partial_sample_run:
+                    return {"status": "skipped", "reason": "selected_samples_not_rerunnable"}
+                if sample_limit is not None:
+                    return {"status": "skipped", "reason": f"already_completed_for_limit_{sample_limit}"}
+                return {"status": "skipped", "reason": "already_completed"}
             
             # 更新状态为运行中
-            self.placeholder_manager.update_placeholder_status(config, "running")
+            if not partial_sample_run:
+                self.placeholder_manager.update_placeholder_status(config, "running")
             
             # 执行实验，传递sample_limit
-            result = self.run_single_experiment(config, placeholder_data, sample_limit)
+            result = self.run_single_experiment(
+                config,
+                placeholder_data,
+                sample_limit,
+                selected_sample_indices=selected_sample_indices,
+            )
             
             # 更新占位符状态
             if result.get("status") == "completed":
                 sample_results = result.get("sample_results", [])
-                
+                final_status = self._derive_placeholder_status_from_samples(sample_results)
+                success = True
+
                 if self.verbose:
                     print(f"   💾 保存实验结果: {len(sample_results)} 个样本结果")
+                    print(f"   🧾 推导最终状态: {final_status}")
                 
-                if sample_limit is not None:
+                if partial_sample_run:
+                    if self.verbose:
+                        print("   📝 精确样本运行完成：仅更新样本结果，不更新整体实验状态")
+                elif sample_limit is not None:
                     # 更新sample-limit特定状态
                     success = self.placeholder_manager.update_placeholder_sample_limit_status(
-                        config, sample_limit, "success", sample_results)
+                        config, sample_limit, final_status, sample_results)
                     if self.verbose:
                         status_msg = "成功" if success else "失败"
                         print(f"   📝 更新样本限制状态 (limit={sample_limit}): {status_msg}")
                 else:
                     # 更新传统完整实验状态
-                    success = self.placeholder_manager.update_placeholder_status(config, "success", sample_results)
+                    success = self.placeholder_manager.update_placeholder_status(config, final_status, sample_results)
                     if self.verbose:
                         status_msg = "成功" if success else "失败"
                         print(f"   📝 更新占位符状态: {status_msg}")
@@ -2476,13 +2916,16 @@ class SmartPlaceholderRunner:
                     
             elif result.get("status") == "failed":
                 error_info = result.get("error", "Unknown error")
-                if sample_limit is not None:
+                if partial_sample_run:
+                    if self.verbose:
+                        print(f"   ❌ 精确样本运行失败，未更新整体实验状态: {error_info[:100]}...")
+                elif sample_limit is not None:
                     self.placeholder_manager.update_placeholder_sample_limit_status(
                         config, sample_limit, "failed", None, error_info)
                 else:
                     self.placeholder_manager.update_placeholder_status(config, "failed", None, error_info)
                 
-                if self.verbose:
+                if self.verbose and not partial_sample_run:
                     print(f"   ❌ 实验失败，已更新占位符状态: {error_info[:100]}...")
             else:
                 if self.verbose:
@@ -2499,7 +2942,10 @@ class SmartPlaceholderRunner:
             
             # 更新占位符状态为失败
             try:
-                if 'config' in locals():
+                if bool(selected_sample_indices):
+                    if self.verbose:
+                        print("   ❌ 精确样本运行异常，跳过顶层状态更新")
+                elif 'config' in locals():
                     self.placeholder_manager.update_placeholder_status(config, "failed", None, str(e))
                 else:
                     # 如果配置还未加载，尝试从占位符文件获取
@@ -2513,7 +2959,13 @@ class SmartPlaceholderRunner:
             
             return {"status": "failed", "error": str(e)}
     
-    def run_batch_placeholders(self, placeholder_files: List[str], workers: int = 1, sample_limit: int = None) -> List[Dict[str, Any]]:
+    def run_batch_placeholders(
+        self,
+        placeholder_files: List[str],
+        workers: int = 1,
+        sample_limit: int = None,
+        selected_sample_indices: Optional[List[int]] = None,
+    ) -> List[Dict[str, Any]]:
         """批量运行占位符实验
         
         Args:
@@ -2537,7 +2989,11 @@ class SmartPlaceholderRunner:
                         i + 1, len(placeholder_files), experiment_name, config
                     )
                     
-                    result = self.run_placeholder_experiment(placeholder_file, sample_limit)
+                    result = self.run_placeholder_experiment(
+                        placeholder_file,
+                        sample_limit,
+                        selected_sample_indices=selected_sample_indices,
+                    )
                     
                     # 显示实验完成
                     if result.get("status") == "completed":
@@ -2554,7 +3010,12 @@ class SmartPlaceholderRunner:
                     # 提交任务
                     future_to_index = {}
                     for i, placeholder_file in enumerate(placeholder_files):
-                        future = executor.submit(self.run_placeholder_experiment, placeholder_file)
+                        future = executor.submit(
+                            self.run_placeholder_experiment,
+                            placeholder_file,
+                            sample_limit,
+                            selected_sample_indices,
+                        )
                         future_to_index[future] = i
                     
                     # 收集结果
@@ -2584,6 +3045,11 @@ class SmartPlaceholderRunner:
             # 清理defense instances
             for cache_key, defended_model_info in self.experiment_defended_models.items():
                 defense_instance = defended_model_info.get("defense_instance")
+                if defense_instance and hasattr(defense_instance, "close"):
+                    try:
+                        defense_instance.close()
+                    except Exception as e:
+                        logger.warning(f"关闭defense instance失败 {cache_key}: {e}")
                 if defense_instance and hasattr(defense_instance, '__del__'):
                     try:
                         del defense_instance
@@ -2591,15 +3057,17 @@ class SmartPlaceholderRunner:
                         logger.warning(f"清理defense instance失败 {cache_key}: {e}")
             
             self.experiment_defended_models.clear()
-            
-            # 强制垃圾回收
-            import gc
-            gc.collect()
-            if torch is not None and torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            
-            if self.verbose:
-                logger.info("✅ 实验级缓存清理完成")
+
+        if self._judger_cache:
+            cached_judgers = list(self._judger_cache.items())
+            self._judger_cache.clear()
+            for cache_key, judger_instance in cached_judgers:
+                self._cleanup_runtime_component(judger_instance, cache_key)
+
+        self._release_cuda_memory(aggressive=True)
+
+        if self.verbose:
+            logger.info("✅ 实验级缓存清理完成")
 
 
 # 向后兼容的类名
@@ -2613,14 +3081,22 @@ def main():
     parser = argparse.ArgumentParser(description="智能占位符实验执行器")
     parser.add_argument("--run", metavar="PLACEHOLDER_FILE", help="运行单个占位符实验")
     parser.add_argument("--run-all", action="store_true", help="批量运行占位符实验")
+    parser.add_argument("--placeholders-dir", metavar="DIR", default="experiments/placeholders",
+                        help="占位符目录 (默认: experiments/placeholders)")
+    parser.add_argument("--sample-limit", type=int, default=None, metavar="N",
+                        help="每个占位符只运行前 N 个样本")
     parser.add_argument("--workers", type=int, default=1, help="并行工作数")
     parser.add_argument("--show-reuse-stats", action="store_true", help="显示复用统计")
     parser.add_argument("--verbose", action="store_true", help="显示详细的实验过程和结果")
     parser.add_argument("--max-length", type=int, default=200, help="文本显示的最大长度 (默认: 200)")
     parser.add_argument("--rerun-failed", action="store_true",
-                        help="重跑除success外的所有样本状态（如 completed/failed/pending）")
+                        help="重跑失败/待运行样本状态，跳过success和completed")
+    parser.add_argument("--rerun-completed", action="store_true",
+                        help="重跑除success外的所有样本状态（包含completed/failed/pending）")
     parser.add_argument("--force-rerun", action="store_true",
                         help="强制重跑全部样本（包含success和completed）")
+    parser.add_argument("--force-rerun-before", metavar="TIMESTAMP",
+                        help="仅重跑 experiment_timestamp 早于该值的样本；支持 Unix 时间戳（秒）或 ISO 时间")
     
     args = parser.parse_args()
     
@@ -2629,15 +3105,18 @@ def main():
                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
     runner = SmartPlaceholderRunner(
+        placeholders_dir=args.placeholders_dir,
         verbose=args.verbose,
         max_length=args.max_length,
         rerun_failed=args.rerun_failed,
-        force_rerun=args.force_rerun
+        rerun_completed=args.rerun_completed,
+        force_rerun=args.force_rerun,
+        force_rerun_before=parse_rerun_before_timestamp(args.force_rerun_before),
     )
     
     if args.run:
         # 运行单个实验
-        result = runner.run_placeholder_experiment(args.run)
+        result = runner.run_placeholder_experiment(args.run, sample_limit=args.sample_limit)
         print(f"实验结果: {result.get('status')}")
         
         if result.get("status") == "completed":

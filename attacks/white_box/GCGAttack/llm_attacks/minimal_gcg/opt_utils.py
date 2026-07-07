@@ -57,7 +57,7 @@ def token_gradients(model, input_ids, input_slice, target_slice, loss_slice):
         ], 
         dim=1)
     
-    logits = model(inputs_embeds=full_embeds).logits
+    logits = model(inputs_embeds=full_embeds).logits.float()
     targets = input_ids[target_slice]
     loss = nn.CrossEntropyLoss()(logits[0,loss_slice,:], targets)
     
@@ -109,10 +109,9 @@ def get_filtered_cands(tokenizer, control_cand, filter_cand=True, curr_control=N
             cands.append(decoded_str)
 
     if filter_cand:
-        # If no candidate was accepted, fallback to using the original control string.
+        # If no candidate was accepted, fallback to keeping the current control string.
         if not cands:
-            fallback = tokenizer.decode(control_cand[0], skip_special_tokens=True)
-            cands = [fallback] * control_cand.shape[0]
+            cands = [curr_control] * control_cand.shape[0]
         else:
             # Pad the candidate list so that the number of candidates equals control_cand.shape[0]
             cands = cands + [cands[-1]] * (control_cand.shape[0] - len(cands))
@@ -183,6 +182,44 @@ def forward(*, model, input_ids, attention_mask, batch_size=512):
     
     return torch.cat(logits, dim=0)
 
+def get_losses_batched(*, model, tokenizer, input_ids, control_slice, test_controls, target_slice, batch_size=16):
+    """Evaluate target loss for each candidate control without accumulating full logit tensors."""
+    max_len = control_slice.stop - control_slice.start
+    test_ids = [
+        torch.tensor(tokenizer(control, add_special_tokens=False).input_ids[:max_len], device=model.device)
+        for control in test_controls
+    ]
+    pad_tok = 0
+    while pad_tok in input_ids or any(pad_tok in ids for ids in test_ids):
+        pad_tok += 1
+    nested = torch.nested.nested_tensor(test_ids)
+    test_ids = torch.nested.to_padded_tensor(nested, pad_tok, (len(test_ids), max_len))
+
+    locs = torch.arange(control_slice.start, control_slice.stop).repeat(test_ids.shape[0], 1).to(model.device)
+    all_ids = torch.scatter(
+        input_ids.unsqueeze(0).repeat(test_ids.shape[0], 1).to(model.device),
+        1, locs, test_ids,
+    )
+    attn_mask = (all_ids != pad_tok).type(all_ids.dtype)
+    del locs, test_ids; gc.collect()
+
+    loss_slice = slice(target_slice.start - 1, target_slice.stop - 1)
+    crit = nn.CrossEntropyLoss(reduction='none')
+    all_losses = []
+
+    for i in range(0, all_ids.shape[0], batch_size):
+        batch_ids = all_ids[i:i + batch_size]
+        batch_mask = attn_mask[i:i + batch_size]
+        with torch.no_grad():
+            logits = model(input_ids=batch_ids, attention_mask=batch_mask).logits.float()
+        batch_loss = crit(logits[:, loss_slice, :].transpose(1, 2), batch_ids[:, target_slice])
+        all_losses.append(batch_loss.mean(dim=-1).cpu())
+        del logits, batch_loss; gc.collect()
+
+    del all_ids, attn_mask
+    return torch.cat(all_losses, dim=0)
+
+
 def target_loss(logits, ids, target_slice):
     crit = nn.CrossEntropyLoss(reduction='none')
     loss_slice = slice(target_slice.start-1, target_slice.stop-1)
@@ -220,4 +257,4 @@ def load_model_and_tokenizer(model_path, tokenizer_path=None, device='cuda:0', *
     if not tokenizer.pad_token:
         tokenizer.pad_token = tokenizer.eos_token
     
-    return model, tokenizer
+    return model, tokenizer

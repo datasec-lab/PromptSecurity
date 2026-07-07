@@ -1,5 +1,5 @@
 {
-  "threshold": 0.5,
+  "threshold": 1000,
   "window_size": 10,
   "num_samples": 5,
   "safe_msg": "Sorry, but I cannot assist with that."

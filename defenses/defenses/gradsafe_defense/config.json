@@ -1,3 +1,4 @@
 {
-  "threshold": 0.25
+  "threshold": 0.25,
+  "gradient_max_input_tokens": 2048
 }

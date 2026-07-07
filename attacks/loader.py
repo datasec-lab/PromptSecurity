@@ -222,16 +222,32 @@ def get_attack_config_path(attack_name: str) -> Optional[str]:
     # Handle special case
     if attack_name == "no_attack":
         return None
-    
-    # Check type
-    black_box_path = Path(__file__).parent / "black_box" / attack_name
-    white_box_path = Path(__file__).parent / "white_box" / attack_name
-    
-    if black_box_path.exists():
-        config_path = black_box_path / "config.json"
-    elif white_box_path.exists():
-        config_path = white_box_path / "config.json"
-    else:
+
+    normalized_name = attack_name.replace("-", "_")
+    black_box_root = Path(__file__).parent / "black_box"
+    white_box_root = Path(__file__).parent / "white_box"
+
+    candidate_names = [normalized_name]
+    if normalized_name.lower().endswith("attack") and len(normalized_name) > len("attack"):
+        candidate_names.append(normalized_name[:-len("attack")])
+
+    def _resolve_attack_dir(root: Path) -> Optional[Path]:
+        for candidate in candidate_names:
+            candidate_path = root / candidate
+            if candidate_path.exists():
+                return candidate_path
+        for candidate in candidate_names:
+            lowered = candidate.lower()
+            for item in root.iterdir():
+                if item.is_dir() and item.name.lower() == lowered:
+                    return item
         return None
-    
+
+    attack_path = _resolve_attack_dir(black_box_root)
+    if attack_path is None:
+        attack_path = _resolve_attack_dir(white_box_root)
+    if attack_path is None:
+        return None
+
+    config_path = attack_path / "config.json"
     return str(config_path) if config_path.exists() else None

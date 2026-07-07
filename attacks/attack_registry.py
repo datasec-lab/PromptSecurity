@@ -13,9 +13,7 @@ from attacks.black_box.ReNeLLM.ReNeLLM import ReNeLLM
 from attacks.black_box.TapAttack.tapattack import TapAttack
 from attacks.black_box.DrAttack.dr_attack import DrAttackAttack
 from attacks.black_box.InceptionAttack.inception_attack import InceptionAttack
-# Temporarily disabled due to import issues
-# from attacks.black_box.MultilingualJailbreak.Multilingual_jailbreak_attack import MultilingualJailbreakAttack
-MultilingualJailbreakAttack = None
+from attacks.black_box.MultilingualJailbreak.Multilingual_jailbreak_attack import MultilingualJailbreakAttack
 from attacks.black_box.GPTFUZZER.GPTFUZZER import GPTFUZZER
 
 
@@ -39,7 +37,7 @@ ATTACKS = {
     'InceptionAttack': InceptionAttack,
     'TapAttack': TapAttack,
     'DrAttackAttack': DrAttackAttack,
-    # 'MultilingualJailbreakAttack': MultilingualJailbreakAttack,  # Temporarily disabled
+    'MultilingualJailbreakAttack': MultilingualJailbreakAttack,
     'GPTFUZZER': GPTFUZZER,
     'PersuasiveInContextAttack': PersuasiveInContextAttack,
 

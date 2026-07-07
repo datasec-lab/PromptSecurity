@@ -24,20 +24,29 @@ class PrimeGuardDefendedModel(BaseDefendedModel):
 
     def _generate(self, prompt, system_prompt=""):
         """Unified single-call generation through target_model with corrected sampling parameters."""
-        full_prompt = f"{system_prompt}\n{prompt}" if system_prompt else prompt
+        if system_prompt:
+            full_prompt = f"{system_prompt}\n{prompt}"
+        elif hasattr(self.tokenizer, "apply_chat_template") and self.tokenizer.chat_template:
+            # Use chat template for instruction-tuned models that require it
+            messages = [{"role": "user", "content": prompt}]
+            full_prompt = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+        else:
+            full_prompt = prompt
         inputs = self.tokenizer(full_prompt, return_tensors="pt").to(self.target_model.device)
 
         # Explicitly set correct generation parameters to silence warnings
         generate_kwargs = {
-            "do_sample": True,
-            "temperature": self.generate_kwargs.get("temperature", 0.7),
-            "top_p": self.generate_kwargs.get("top_p", 0.6),
+            "do_sample": False,
+            "temperature": self.generate_kwargs.get("temperature", 0.0),
             "max_new_tokens": self.generate_kwargs.get("max_new_tokens", 512),
-            **self.generate_kwargs  # include other kwargs if provided
+            **self.generate_kwargs
         }
 
+        input_length = inputs["input_ids"].shape[1]
         output = self.target_model.generate(**inputs, **generate_kwargs)
-        return self.tokenizer.decode(output[0], skip_special_tokens=True)
+        return self.tokenizer.decode(output[0][input_length:], skip_special_tokens=True)
 
     def route(self, prompt):
         cached_result = next(
@@ -47,9 +56,8 @@ class PrimeGuardDefendedModel(BaseDefendedModel):
         if cached_result:
             return cached_result
 
-        # Vanilla Generation
         system_instructions = self.env.get_template("oai_safety.j2").render()
-        vanilla_result = self._generate(prompt, system_prompt=system_instructions)
+        # vanilla_result = self._generate(prompt, system_prompt=system_instructions)
 
         # PrimeGuard Routing Decision
         routing_template = self.env.get_template("route_selection.j2")
@@ -70,7 +78,19 @@ class PrimeGuardDefendedModel(BaseDefendedModel):
         )
 
         # Execute routed action
-        final_output = self._generate(final_conv[0])
+        conv = final_conv[0]
+        if routes[0] == "potential_violation" and len(conv) == 3:
+            messages = [
+                {"role": "user", "content": conv[0]},
+                {"role": "assistant", "content": conv[1]},
+                {"role": "user", "content": conv[2]},
+            ]
+            formatted = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            final_output = self._generate(formatted)
+        else:
+            final_output = self._generate(conv[0])
 
         primeguard_answer = final_output
         reevaluation = "N/A"
@@ -84,7 +104,7 @@ class PrimeGuardDefendedModel(BaseDefendedModel):
         result = {
             "prompt": prompt,
             "route": routes[0],
-            "vanilla_result": vanilla_result,
+            # "vanilla_result": vanilla_result,
             "primeguard_result": primeguard_answer,
             "system_check": system_checks[0],
             "system_tip": system_tips[0],

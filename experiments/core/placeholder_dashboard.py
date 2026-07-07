@@ -116,7 +116,7 @@ class PlaceholderDashboard:
             # 同时检查sample_limit_statuses中的结果（占位符系统特有）
             sample_limit_statuses = placeholder.get("sample_limit_statuses", {})
             for limit_key, limit_data in sample_limit_statuses.items():
-                if limit_data.get("status") == "success":
+                if limit_data.get("status") in {"success", "completed"}:
                     limit_results = limit_data.get("results", [])
                     for result in limit_results:
                         clean_result = result.get("judger_result_on_clean")
@@ -294,7 +294,7 @@ class PlaceholderDashboard:
         # 检查sample_limit_statuses中的结果 - 这是关键修复
         sample_limit_statuses = placeholder.get("sample_limit_statuses", {})
         for limit_key, limit_data in sample_limit_statuses.items():
-            if limit_data.get("status") == "success":
+            if limit_data.get("status") in {"success", "completed"}:
                 limit_results = limit_data.get("results", [])
                 for result in limit_results:
                     clean_result = result.get("judger_result_on_clean")
@@ -345,7 +345,7 @@ class PlaceholderDashboard:
         # 检查sample_limit_statuses中的judger数据
         sample_limit_statuses = placeholder.get("sample_limit_statuses", {})
         for limit_key, limit_data in sample_limit_statuses.items():
-            if limit_data.get("status") == "success":
+            if limit_data.get("status") in {"success", "completed"}:
                 limit_results = limit_data.get("results", [])
                 for result in limit_results:
                     clean_result = result.get("judger_result_on_clean")

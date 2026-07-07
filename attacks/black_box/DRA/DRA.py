@@ -284,3 +284,16 @@ class DRA(BaseAttack):
             print(judger_result, f"After Step {step+1}: {response}")
 
         return self.query_count, crafted_prompt
+
+    def close(self):
+        """释放 DRA 持有的评判器 GPU 显存，避免攻击结束后显存泄漏。"""
+        if self.judger is not None:
+            try:
+                if hasattr(self.judger, "close"):
+                    self.judger.close()
+                elif hasattr(self.judger, "judge_model") and hasattr(self.judger.judge_model, "cpu"):
+                    self.judger.judge_model.cpu()
+            except Exception as e:
+                print(f"Warning: Failed to close DRA judger: {e}")
+            finally:
+                self.judger = None

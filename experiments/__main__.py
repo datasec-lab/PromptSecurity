@@ -362,12 +362,25 @@ def main():
         parser.add_argument("--run-dataset", metavar="DATASET", help="只运行指定数据集的占位符实验")
         parser.add_argument("--run-judger", metavar="JUDGER", help="只运行指定评判器的占位符实验")
         parser.add_argument("--run-limit", type=int, metavar="N", help="限制运行的占位符实验数量")
+        parser.add_argument("--workers", type=int, default=1, metavar="N", help="并行工作进程数 (默认: 1；API模型建议≤5，本地模型建议≤2)")
+        parser.add_argument(
+            "--sample-index",
+            dest="sample_indices",
+            action="append",
+            type=int,
+            metavar="N",
+            help="仅运行指定 sample_index，可重复传入多个",
+        )
         parser.add_argument("--generate-only", action="store_true", help="仅生成占位符，不执行实验")
         parser.add_argument("--max-length", type=int, default=200, help="详细输出模式下文本显示的最大长度 (默认: 200)")
         parser.add_argument("--rerun-failed", action="store_true",
-                          help="重跑除success外的所有样本状态（如 completed/failed/pending）")
+                          help="重跑失败/待运行样本状态，跳过success和completed")
+        parser.add_argument("--rerun-completed", action="store_true",
+                          help="重跑除success外的所有样本状态（包含completed/failed/pending）")
         parser.add_argument("--force-rerun", action="store_true",
                           help="强制重跑全部样本（包含success和completed）")
+        parser.add_argument("--force-rerun-before", metavar="TIMESTAMP",
+                          help="仅重跑 experiment_timestamp 早于该值的实验/样本；支持 Unix 时间戳（秒）或 ISO 时间")
 
         args = parser.parse_args()
 
@@ -379,6 +392,15 @@ def main():
 
         # 设置日志
         setup_logging(args.verbose)
+
+        from experiments.core.placeholder_runner import parse_rerun_before_timestamp
+        try:
+            args.force_rerun_before = parse_rerun_before_timestamp(args.force_rerun_before)
+        except ValueError as exc:
+            parser.error(str(exc))
+
+        # 如果提供了--placeholders-dir，使用它，否则默认路径
+        placeholders_dir = args.placeholders_dir or "experiments/placeholders"
 
         # 显示使用示例
         if args.show_examples:
@@ -455,7 +477,9 @@ def main():
                 max_length=args.max_length,
                 seed=getattr(args, 'seed', 42),
                 rerun_failed=args.rerun_failed,
-                force_rerun=args.force_rerun
+                rerun_completed=args.rerun_completed,
+                force_rerun=args.force_rerun,
+                force_rerun_before=args.force_rerun_before,
             )
             
             # 获取可执行状态的占位符
@@ -470,14 +494,38 @@ def main():
             else:
                 # 默认状态选择会受到重跑策略影响
                 all_placeholders = placeholder_manager.list_placeholders()
+                sample_limit = getattr(args, 'sample_limit', None)
+                sample_indices = sorted(set(args.sample_indices)) if getattr(args, 'sample_indices', None) else None
+                has_targeted_rerun_strategy = any([
+                    args.force_rerun_before is not None,
+                    args.rerun_completed,
+                    args.rerun_failed,
+                    sample_indices,
+                ])
                 if args.force_rerun:
                     placeholders = all_placeholders
                     if args.verbose:
                         print(f"📋 force-rerun 启用：选中全部状态，占位符 {len(placeholders)} 个")
-                elif args.rerun_failed:
-                    placeholders = [p for p in all_placeholders if p.get("status") != "success"]
+                elif has_targeted_rerun_strategy:
+                    placeholders = [
+                        p for p in all_placeholders
+                        if runner.placeholder_needs_rerun(
+                            str(placeholder_manager.placeholders_dir / p["filename"]),
+                            sample_limit=sample_limit,
+                            selected_sample_indices=sample_indices,
+                        )
+                    ]
                     if args.verbose:
-                        print(f"📋 rerun-failed 启用：选中非success状态，占位符 {len(placeholders)} 个")
+                        strategy_parts = []
+                        if args.force_rerun_before is not None:
+                            strategy_parts.append("force-rerun-before")
+                        if args.rerun_completed:
+                            strategy_parts.append("rerun-completed")
+                        if args.rerun_failed:
+                            strategy_parts.append("rerun-failed")
+                        if sample_indices:
+                            strategy_parts.append("sample-index")
+                        print(f"📋 定向重跑策略（{', '.join(strategy_parts)}）启用：选中仍需重跑的占位符 {len(placeholders)} 个")
                 else:
                     runnable_statuses = {"running", "in_progress", "created", "pending", "failed"}
                     placeholders = [p for p in all_placeholders if p.get("status") in runnable_statuses]
@@ -487,8 +535,11 @@ def main():
                 if not placeholders:
                     if args.force_rerun:
                         print("✅ 没有可重跑的占位符实验")
-                    elif args.rerun_failed:
-                        print("✅ 没有非success状态的占位符实验")
+                    elif has_targeted_rerun_strategy:
+                        if args.force_rerun_before is not None and not any([args.rerun_completed, args.rerun_failed, sample_indices]):
+                            print("✅ 没有 experiment_timestamp 早于阈值的占位符实验")
+                        else:
+                            print("✅ 没有符合当前定向重跑策略的占位符实验")
                     else:
                         print("✅ 没有待执行、运行中或失败的占位符实验")
                     return
@@ -542,17 +593,24 @@ def main():
                 print(f"   🔢 数量限制: {args.run_limit}")
             if hasattr(args, 'sample_limit') and args.sample_limit:
                 print(f"   📊 样本限制: {args.sample_limit}")
+            if getattr(args, 'sample_indices', None):
+                print(f"   🎯 精确样本: {sorted(set(args.sample_indices))}")
             if args.rerun_failed:
-                print("   🔁 非success样本重跑: 启用")
+                print("   🔁 failed/待运行样本重跑: 启用（跳过success/completed）")
+            if args.rerun_completed:
+                print("   🔁 非success样本重跑: 启用（包含completed）")
             if args.force_rerun:
                 print("   🔁 强制重跑: 启用")
+            if args.force_rerun_before is not None:
+                print(f"   🔁 按时间强制重跑: 启用（experiment_timestamp < {args.force_rerun_before}）")
             if args.verbose:
                 print(f"   📋 详细输出: 启用 (最大长度: {args.max_length})")
             print(f"   提示: 使用 --verbose 查看详细的实验过程和结果")
             
             # 传递sample_limit参数（如果存在）
             sample_limit = getattr(args, 'sample_limit', None)
-            results = runner.run_batch_placeholders(placeholder_files, workers, sample_limit)
+            sample_indices = sorted(set(args.sample_indices)) if getattr(args, 'sample_indices', None) else None
+            results = runner.run_batch_placeholders(placeholder_files, workers, sample_limit, sample_indices)
             
             # 统计结果
             completed = len([r for r in results if r.get("status") == "completed"])
@@ -611,7 +669,9 @@ def main():
                 max_length=args.max_length,
                 seed=getattr(args, 'seed', 42),
                 rerun_failed=args.rerun_failed,
-                force_rerun=args.force_rerun
+                rerun_completed=args.rerun_completed,
+                force_rerun=args.force_rerun,
+                force_rerun_before=args.force_rerun_before,
             )
             results = runner.run_batch_placeholders(placeholder_files, workers=getattr(args, 'workers', 1))
             
@@ -680,7 +740,9 @@ def main():
                         max_length=args.max_length,
                         seed=args.seed,
                         rerun_failed=args.rerun_failed,
-                        force_rerun=args.force_rerun
+                        rerun_completed=args.rerun_completed,
+                        force_rerun=args.force_rerun,
+                        force_rerun_before=args.force_rerun_before,
                     )
                     
                     # 添加调试信息
@@ -734,7 +796,9 @@ def main():
                         max_length=args.max_length,
                         seed=args.seed,
                         rerun_failed=args.rerun_failed,
-                        force_rerun=args.force_rerun
+                        rerun_completed=args.rerun_completed,
+                        force_rerun=args.force_rerun,
+                        force_rerun_before=args.force_rerun_before,
                     )
                     
                     # 添加调试信息
@@ -819,7 +883,9 @@ def main():
                 max_length=args.max_length,
                 seed=args.seed,
                 rerun_failed=args.rerun_failed,
-                force_rerun=args.force_rerun
+                rerun_completed=args.rerun_completed,
+                force_rerun=args.force_rerun,
+                force_rerun_before=args.force_rerun_before,
             )
             workers = getattr(args, 'workers', 1)
             

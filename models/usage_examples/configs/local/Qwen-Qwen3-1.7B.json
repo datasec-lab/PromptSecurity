@@ -11,6 +11,7 @@
   "parameters": {
     "temperature": 0.0,
     "max_new_tokens": 512,
-    "do_sample": false
+    "do_sample": false,
+    "enable_thinking": false
   }
 }

@@ -199,8 +199,12 @@ def _validate_and_log_token_parameters(model_type: str, model_name: str, paramet
     token_limit_value = None
     
     if model_type.startswith('api') or model_type != 'local':
-        # API模型应该使用max_tokens
-        if 'max_tokens' in parameters:
+        # API模型支持max_tokens和max_completion_tokens（不同厂商/模型族）
+        if 'max_completion_tokens' in parameters:
+            token_limit_param = 'max_completion_tokens'
+            token_limit_value = parameters['max_completion_tokens']
+            logger.info(f"✅ API模型 {model_name} 配置了 max_completion_tokens: {token_limit_value}")
+        elif 'max_tokens' in parameters:
             token_limit_param = 'max_tokens'
             token_limit_value = parameters['max_tokens']
             logger.info(f"✅ API模型 {model_name} 配置了 max_tokens: {token_limit_value}")
@@ -209,7 +213,7 @@ def _validate_and_log_token_parameters(model_type: str, model_name: str, paramet
             token_limit_param = 'max_new_tokens'
             token_limit_value = parameters['max_new_tokens']
         else:
-            logger.warning(f"⚠️ API模型 {model_name} 未配置token限制参数 (max_tokens)")
+            logger.warning(f"⚠️ API模型 {model_name} 未配置token限制参数 (max_tokens/max_completion_tokens)")
     
     elif model_type == 'local':
         # 本地模型应该使用max_new_tokens
@@ -235,7 +239,7 @@ def _validate_and_log_token_parameters(model_type: str, model_name: str, paramet
     
     # 记录所有generation参数以便调试
     generation_params = {k: v for k, v in parameters.items() 
-                        if k in ['temperature', 'max_tokens', 'max_new_tokens', 'top_p', 'top_k', 'do_sample']}
+                        if k in ['temperature', 'max_tokens', 'max_completion_tokens', 'max_new_tokens', 'top_p', 'top_k', 'do_sample']}
     if generation_params:
         logger.debug(f"📋 模型 {model_name} 的生成参数: {generation_params}")
     else:

@@ -2,15 +2,20 @@ import os
 import sys
 #sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 from defenses.base_defended_model import BaseDefendedModel
-from models.api_models.api_base import APIModel
-from models.local_models.local_base import LocalModel
+try:
+    from models.api_models.api_base import APIModel
+except ModuleNotFoundError:
+    class APIModel:  # type: ignore
+        pass
+
+try:
+    from models.local_models.local_base import LocalModel
+except ModuleNotFoundError:
+    class LocalModel:  # type: ignore
+        pass
 #from defenses.base_defended_model import BaseDefendedModel
-from transformers import AutoTokenizer, AutoModelForCausalLM
-import torch
 import random
 import string
-import numpy as np
-import json
 
 class SmoothLLMDefense(BaseDefendedModel):
     TEST_PREFIXES = [
@@ -84,24 +89,59 @@ class SmoothLLMDefense(BaseDefendedModel):
             variants.append(func(prompt, self.perturb_pct))
         return variants
 
-    def _generate_text(self, prompt, max_length=512):
-        # Handle API models vs local models
-        if isinstance(self.target_model, APIModel):
-            # API model - call generate directly
-            return self.target_model.generate(prompt=prompt, max_tokens=max_length)
+    def _generate_text(self, prompt, max_length=512, **kwargs):
+        generation_kwargs = dict(kwargs)
 
         if isinstance(self.target_model, LocalModel):
-            # Local model - use tokenizer
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.target_model.device)
-            input_ids = inputs["input_ids"]
-            outputs = self.target_model.generate(**inputs, max_new_tokens=max_length)
-            generated = outputs[0][input_ids.shape[-1]:]  # Strip prompt
-            return self.tokenizer.decode(generated, skip_special_tokens=True)
+            token_limit = generation_kwargs.pop("max_new_tokens", None)
+            if token_limit is None:
+                for alias in ("max_tokens", "max_completion_tokens", "max_output_tokens", "max_length"):
+                    if alias in generation_kwargs:
+                        token_limit = generation_kwargs.pop(alias)
+                        break
+            if token_limit is None:
+                token_limit = max_length
+            if token_limit is not None:
+                generation_kwargs["max_new_tokens"] = token_limit
+        elif isinstance(self.target_model, APIModel):
+            token_keys = ("max_tokens", "max_completion_tokens", "max_new_tokens", "max_output_tokens")
+            if "max_length" in generation_kwargs and not any(key in generation_kwargs for key in token_keys):
+                generation_kwargs["max_tokens"] = generation_kwargs.pop("max_length")
+            elif not any(key in generation_kwargs for key in token_keys) and max_length is not None:
+                generation_kwargs["max_tokens"] = max_length
 
-        # Fallback to local-style generation for unknown wrappers
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.target_model.device)
+        if hasattr(self.target_model, "generate"):
+            try:
+                return self.target_model.generate(prompt=prompt, **generation_kwargs)
+            except TypeError:
+                pass
+
+        # Fallback for raw HF-style models that expose .generate() but do not
+        # accept our wrapper's prompt/kwargs convention.
+        fallback_kwargs = dict(generation_kwargs)
+        token_limit = fallback_kwargs.pop("max_new_tokens", None)
+        if token_limit is None:
+            for alias in ("max_tokens", "max_completion_tokens", "max_output_tokens", "max_length"):
+                if alias in fallback_kwargs:
+                    token_limit = fallback_kwargs.pop(alias)
+                    break
+        if token_limit is None:
+            token_limit = max_length
+        if token_limit is not None:
+            fallback_kwargs["max_new_tokens"] = token_limit
+
+        model_device = getattr(self.target_model, "device", None)
+        if model_device is None and hasattr(self.target_model, "parameters"):
+            try:
+                model_device = next(self.target_model.parameters()).device
+            except (StopIteration, TypeError):
+                model_device = None
+        if model_device is None:
+            model_device = "cpu"
+
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(model_device)
         input_ids = inputs["input_ids"]
-        outputs = self.target_model.generate(**inputs, max_new_tokens=max_length)
+        outputs = self.target_model.generate(**inputs, **fallback_kwargs)
         generated = outputs[0][input_ids.shape[-1]:]  # Strip prompt
         return self.tokenizer.decode(generated, skip_special_tokens=True)
 
@@ -118,7 +158,7 @@ class SmoothLLMDefense(BaseDefendedModel):
             print("--------------------------------------------------")
 
         jailbreak_flags = [self.is_jailbroken(r) for r in responses]
-        jb_pct = np.mean(jailbreak_flags)
+        jb_pct = (sum(jailbreak_flags) / len(jailbreak_flags)) if jailbreak_flags else 0.0
         detection_method = "judger" if self.use_judger else "prefix"
         print(f"[SmoothLLM] Jailbreak rate ({detection_method}): {jb_pct * 100:.1f}% over {self.n} copies")
 

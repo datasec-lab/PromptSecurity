@@ -30,14 +30,20 @@ from .jbb_loader import JBBLoader
 from .airbench_loader import AirBenchLoader
 from .combined_dataset_loader import CombinedDatasetLoader
 from .balanced_challenge_loader import BalancedChallengeLoader
+from .mmlu_loader import MMLULoader
+from .truthfulqa_loader import TruthfulQALoader
+from .utility_mcq_loader import UtilityMCQLoader
 from .dataset_factory import DatasetFactory
 
 __all__ = [
     'BaseDatasetLoader',
-    'HarmBenchLoader', 
+    'HarmBenchLoader',
     'JBBLoader',
     'AirBenchLoader',
     'CombinedDatasetLoader',
     'BalancedChallengeLoader',
-    'DatasetFactory'
-]
+    'MMLULoader',
+    'TruthfulQALoader',
+    'UtilityMCQLoader',
+    'DatasetFactory',
+]

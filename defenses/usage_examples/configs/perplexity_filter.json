@@ -1,11 +1,9 @@
 {
   "defense_name": "PerplexityFilter",
   "parameters": {
-  "threshold": 0.5,
-  "window_size": 10,
-  "num_samples": 5,
-  "safe_msg": "Sorry, but I cannot assist with that."
+    "threshold": 1000.0,
+    "safe_msg": "I'm sorry, but I cannot help with that request.",
+    "gpt2_model_name": "gpt2",
+    "gpt2_device": "cpu"
   }
-
 }
-

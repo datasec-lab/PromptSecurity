@@ -149,8 +149,14 @@ class SuffixManager:
     def generate_str(self, model, gen_config=None):
         if gen_config is None:
             gen_config = {"max_new_tokens": 32}
-        prompt = self.get_prompt()  # get the prompt as a string
-        # Use the model's generate method that expects a string prompt.
+        # Build prompt WITHOUT the target so the model generates freely.
+        # Including the target causes the model to continue from "Sure, here's
+        # the answer", which never triggers refusal prefixes and makes the
+        # early-stop check fire on iteration 1.
+        self.conv_template.append_message(self.conv_template.roles[0], f"{self.instruction} {self.adv_string}")
+        self.conv_template.append_message(self.conv_template.roles[1], None)
+        prompt = self.conv_template.get_prompt()
+        self.conv_template.messages = []
         return model.generate(prompt=prompt, use_chat_template=False, **gen_config)
 
 

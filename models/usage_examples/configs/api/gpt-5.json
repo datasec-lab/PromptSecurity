@@ -3,7 +3,8 @@
   "model_name": "gpt-5",
   "parameters": {
     "temperature": 0.0,
-    "max_tokens": 512
+    "max_tokens": 2048,
+    "reasoning_effort": "low"
   },
   "init_parameters": {
     "seed": 42

@@ -71,6 +71,20 @@ class BacktranslationDefendedModel(BaseDefendedModel):
         self.device = self._infer_device(self.hf_model, str(self.device))
         return self.device
 
+    def _has_tokenizer(self) -> bool:
+        return self.tokenizer is not None and callable(self.tokenizer)
+
+    def _supports_log_likelihood(self) -> bool:
+        return self._has_tokenizer() and not isinstance(self.model, APIModel)
+
+    def _require_tokenizer(self, action: str) -> None:
+        if not self._has_tokenizer():
+            model_name = getattr(self.model, "model_name", None) or getattr(self.model, "model_name_or_path", None) or type(self.model).__name__
+            raise RuntimeError(
+                f"back_translation requires a callable tokenizer for {action}, "
+                f"but got tokenizer={type(self.tokenizer).__name__} for model={model_name}"
+            )
+
     def generate(self, prompt: str, **kwargs) -> str:
         # Handle API models vs local HF differently
         if isinstance(self.model, APIModel):
@@ -88,7 +102,7 @@ class BacktranslationDefendedModel(BaseDefendedModel):
 
         # Reject early if already safe
         if self.check_refusal(response, exclude_lack_of_info=False):
-            return "[Blocked by Backtranslation Defense: original response is refusal]"
+            return "I'm sorry,[Blocked by Backtranslation Defense: original response is refusal]"
 
         # Infer prompt from response
         inferred_prompt = self.backtranslate_response(response)
@@ -96,21 +110,28 @@ class BacktranslationDefendedModel(BaseDefendedModel):
 
         # Likelihood filter
         if self.threshold > -math.inf:
-            avg_log_likelihood = self.evaluate_log_likelihood(inferred_prompt, response)
-            if avg_log_likelihood < self.threshold:
-                return response  # Pass original response
+            if self._supports_log_likelihood():
+                avg_log_likelihood = self.evaluate_log_likelihood(inferred_prompt, response)
+                if avg_log_likelihood < self.threshold:
+                    return response  # Pass original response
 
         # Run model on inferred prompt
-        device = self._get_device()
-        input_ids_bt = self.tokenizer(inferred_prompt, return_tensors="pt").input_ids.to(device)
-        response_bt_ids = self.model.generate(input_ids_bt, max_new_tokens=512, do_sample=True, **kwargs)
-        response_bt = self.tokenizer.decode(response_bt_ids[0], skip_special_tokens=True)
+        if isinstance(self.model, APIModel):
+            response_bt = self.model.generate(prompt=inferred_prompt, **kwargs)
+        elif isinstance(self.model, LocalModel):
+            response_bt = self.model.generate(prompt=inferred_prompt, **kwargs)
+        else:
+            self._require_tokenizer("backtranslated prompt generation")
+            device = self._get_device()
+            input_ids_bt = self.tokenizer(inferred_prompt, return_tensors="pt").input_ids.to(device)
+            response_bt_ids = self.model.generate(input_ids_bt, max_new_tokens=512, do_sample=True, **kwargs)
+            response_bt = self.tokenizer.decode(response_bt_ids[0], skip_special_tokens=True)
 
         if self.return_new_response_anyway:
             return response_bt
 
         if self.check_refusal(response_bt):
-            return "[Blocked by Backtranslation Defense]"
+            return "I'm sorry,[Blocked by Backtranslation Defense]"
 
         return response
 
@@ -146,6 +167,7 @@ class BacktranslationDefendedModel(BaseDefendedModel):
         """
         Compute average log-likelihood of `output` given `prompt`.
         """
+        self._require_tokenizer("log-likelihood evaluation")
         full_input = prompt + output  # concatenate for causal language models
         device = self._get_device()
         full_tokens = self.tokenizer(full_input, return_tensors="pt").to(device)

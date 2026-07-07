@@ -1,5 +1,6 @@
 # judgers/harmbench_judger.py
 
+import gc
 import torch
 from transformers import (
     AutoTokenizer,
@@ -172,6 +173,18 @@ class HarmBenchJudger(BaseJudger):
         if not model_loaded:
             raise JudgerError(f"Failed to load model: {model_error}")
 
+    def close(self):
+        """Best-effort release for the local HarmBench classifier."""
+        judge_model = getattr(self, "judge_model", None)
+        if judge_model is not None and hasattr(judge_model, "cpu"):
+            try:
+                judge_model.cpu()
+            except Exception:
+                pass
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     def judge(self, behavior: str = None, generation = None, context: str = None, **kwargs):
         if behavior is None:
             raise ValueError("behavior must be provided for HarmBenchJudger")
@@ -218,6 +231,7 @@ class HarmBenchJudger(BaseJudger):
                         **encoded.to(self.judge_model.device),
                         do_sample=False,
                         max_new_tokens=1,
+                        use_cache=False,
                     ).cpu()
             except RuntimeError as e:
                 if "out of memory" in str(e).lower():

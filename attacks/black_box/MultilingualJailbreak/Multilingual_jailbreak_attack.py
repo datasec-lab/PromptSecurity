@@ -93,7 +93,7 @@ class MultilingualJailbreakAttack(BaseAttack):
         self.target_model_parameters = target_model_parameters
 
         self.assist_model_config = assist_model_config
-        self.languages = languages or ["es"]  # default to Spanish if none given
+        self.languages = languages or ["sw", "ar", "zh", "ja", "ru", "pt", "es", "fr"]
         self.templates = templates or ["template_1"]
 
         self.similarity_threshold = similarity_threshold
@@ -110,33 +110,32 @@ class MultilingualJailbreakAttack(BaseAttack):
 
     def attack(self, original_prompt: str) -> (int, str):
         """
-        Takes the raw user prompt (in English), translates it into
-        one or more languages, merges with a chosen jailbreak template,
-        and returns (query_count, attacked_prompt).
-
-        Because we only show one final attacked prompt, we pick the
-        first language + first template for demonstration. You can
-        adapt to cycle or randomize among them.
+        Iterates over all (language, template) combinations. For each language,
+        translates once, optionally verifies similarity via back-translation, then
+        pairs with each template. Returns the first combination whose language
+        passes the similarity threshold. Falls back to the first combination if
+        no language passes.
         """
-        # For demonstration, let's just do the first language & first template
-        lang = self.languages[0]
-        template_key = self.templates[0]
+        self.query_count = 0  # Reset per call so count reflects this attack only
 
-        # Step 1) Translate the original prompt to 'lang'
-        prompt_in_foreign = self._translate_prompt(original_prompt, lang)
+        template_str = self.TEMPLATES_DICT.get(self.templates[0], "")
+        fallback_prompt = None  # First candidate, used if no language passes threshold
 
-        # Step 2) (Optional) Check with back-translation for filtering
-        if self.do_back_translation:
-            keep = self._verify_similarity(original_prompt, prompt_in_foreign, lang)
-            if not keep:
-                # If we fail the similarity threshold, fallback to English or just proceed
-                pass
+        for lang in self.languages:
+            prompt_in_foreign = self._translate_prompt(original_prompt, lang)
+            candidate = template_str.replace("[QUESTION]", prompt_in_foreign)
 
-        # Step 3) Merge with the chosen jailbreak template
-        template_str = self.TEMPLATES_DICT.get(template_key, "")
-        attacked_prompt = template_str.replace("[QUESTION]", prompt_in_foreign)
+            if fallback_prompt is None:
+                fallback_prompt = candidate
 
-        return self.query_count, attacked_prompt
+            passes = True
+            if self.do_back_translation:
+                passes = self._verify_similarity(original_prompt, prompt_in_foreign, lang)
+
+            if passes:
+                return self.query_count, candidate
+
+        return self.query_count, fallback_prompt or original_prompt
 
     ############################################################################
     # HELPER METHODS

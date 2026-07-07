@@ -21,6 +21,30 @@ sys.path.append(project_root)
 from models import api_keys
 from judgers import load_judger_from_config
 
+
+class _TargetModelAdapter:
+    """Wrap a target model so GPTFUZZER always reuses configured generation kwargs."""
+
+    def __init__(self, target_model, base_parameters=None):
+        self.target_model = target_model
+        self.base_parameters = dict(base_parameters or {})
+
+    def generate(self, prompt, **kwargs):
+        merged_parameters = dict(self.base_parameters)
+        merged_parameters.update(kwargs)
+        return self.target_model.generate(prompt=prompt, **merged_parameters)
+
+    def generate_batch(self, prompts, **kwargs):
+        if hasattr(self.target_model, "generate_batch"):
+            merged_parameters = dict(self.base_parameters)
+            merged_parameters.update(kwargs)
+            return self.target_model.generate_batch(prompts, **merged_parameters)
+        return [self.generate(prompt, **kwargs) for prompt in prompts]
+
+    def __getattr__(self, item):
+        return getattr(self.target_model, item)
+
+
 class GPTFUZZER(BaseAttack):
     def __init__(self, target_model, target_model_parameters, mutate_model='gpt-4', energy=1, max_jailbreak=1, max_query=100, judge_model_config=None, **kwargs) -> None: # mutate model = 'gpt-3.5-turbo' or 'gpt-4'
         super().__init__(target_model)
@@ -45,6 +69,9 @@ class GPTFUZZER(BaseAttack):
 
     def attack(self, original_prompt: str, **model_parameters) -> (int, str):
         openai_model = OpenAILLM(self.mutate_model, api_keys.OPENAI_API_KEY) # mutate model
+        effective_target_parameters = dict(self.target_model_parameters or {})
+        effective_target_parameters.update(model_parameters)
+        target_model = _TargetModelAdapter(self.target_model, effective_target_parameters)
         
         # Use custom judger if available, otherwise use RoBERTa
         if self.judger:
@@ -81,8 +108,7 @@ class GPTFUZZER(BaseAttack):
         questions = [original_prompt]
         fuzzer = GPTFuzzer(
             questions=questions,
-            # target_model=openai_model,
-            target=self.target_model,
+            target=target_model,
             predictor=predictor,
             initial_seed=initial_seed,
             mutate_policy=MutateRandomSinglePolicy([

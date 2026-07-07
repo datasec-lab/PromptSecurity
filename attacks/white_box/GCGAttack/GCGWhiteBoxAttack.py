@@ -12,9 +12,8 @@ from .llm_attacks.minimal_gcg.string_utils import (
 from .llm_attacks.minimal_gcg.opt_utils import (
     token_gradients,
     sample_control,
-    get_logits,
-    target_loss,
     get_filtered_cands,
+    get_losses_batched,
 )
 
 
@@ -34,6 +33,7 @@ class GCGWhiteBoxAttack(BaseAttack):
         adv_string_init=None,
         target=None,
         batch_size=512,
+        forward_batch_size=32,
         topk=256,
         allow_non_ascii=False,
         template_name="auto",
@@ -52,6 +52,7 @@ class GCGWhiteBoxAttack(BaseAttack):
         self.adv_string_init = adv_string_init
         self.target = target
         self.batch_size = batch_size
+        self.forward_batch_size = forward_batch_size
         self.topk = topk
         self.allow_non_ascii = allow_non_ascii
         self.template_name = template_name
@@ -127,18 +128,17 @@ class GCGWhiteBoxAttack(BaseAttack):
                 self.tokenizer, new_adv_suffix_toks, filter_cand=True, curr_control=adv_suffix
             )
 
-            # Compute loss for each candidate by replacing the control tokens in the input
-            logits, ids = get_logits(
+            # Compute loss for each candidate; logits are discarded after each sub-batch
+            losses = get_losses_batched(
                 model=self.target_model,
                 tokenizer=self.tokenizer,
                 input_ids=input_ids,
                 control_slice=self.suffix_manager._control_slice,
                 test_controls=new_adv_suffix,
-                return_ids=True,
-                batch_size=self.batch_size,
+                target_slice=self.suffix_manager._target_slice,
+                batch_size=self.forward_batch_size,
             )
-            losses = target_loss(logits, ids, self.suffix_manager._target_slice)
-            losses_np = losses.float().detach().cpu().numpy()
+            losses_np = losses.numpy()
             best_idx = np.argmin(losses_np)
             best_new_adv_suffix = new_adv_suffix[best_idx]
             current_loss = losses_np[best_idx]
@@ -147,13 +147,6 @@ class GCGWhiteBoxAttack(BaseAttack):
             adv_suffix = best_new_adv_suffix
 
             self.suffix_manager.adv_string = adv_suffix  # update internal state
-
-            # Check if the attack is successful:
-            # We use a simple criterion: if none of the test prefixes appear in the generation.
-            gen_text = self.suffix_manager.generate_str(self.target_model)
-            if not any(prefix in gen_text for prefix in self.suffix_manager.test_prefixes):
-                print(gen_text)
-                break
 
             gc.collect()
             torch.cuda.empty_cache()

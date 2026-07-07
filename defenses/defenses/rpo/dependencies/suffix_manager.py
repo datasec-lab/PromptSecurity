@@ -28,7 +28,15 @@ class NpEncoder(json.JSONEncoder):
             return obj.tolist()
         return json.JSONEncoder.default(self, obj)
 
+def _unwrap_model(model):
+    return getattr(model, "model", model)
+
 def get_embedding_layer(model):
+    model = _unwrap_model(model)
+    if hasattr(model, "get_input_embeddings"):
+        layer = model.get_input_embeddings()
+        if layer is not None:
+            return layer
     if isinstance(model, GPTJForCausalLM) or isinstance(model, GPT2LMHeadModel):
         return model.transformer.wte
     elif isinstance(model, LlamaForCausalLM) or isinstance(model, MistralForCausalLM):
@@ -39,6 +47,11 @@ def get_embedding_layer(model):
         raise ValueError(f"Unknown model type: {type(model)}")
 
 def get_embedding_matrix(model):
+    model = _unwrap_model(model)
+    if hasattr(model, "get_input_embeddings"):
+        layer = model.get_input_embeddings()
+        if layer is not None and hasattr(layer, "weight"):
+            return layer.weight
     if isinstance(model, GPTJForCausalLM) or isinstance(model, GPT2LMHeadModel):
         return model.transformer.wte.weight
     elif isinstance(model, LlamaForCausalLM) or isinstance(model, MistralForCausalLM):
@@ -49,6 +62,11 @@ def get_embedding_matrix(model):
         raise ValueError(f"Unknown model type: {type(model)}")
 
 def get_embeddings(model, input_ids):
+    model = _unwrap_model(model)
+    if hasattr(model, "get_input_embeddings"):
+        layer = model.get_input_embeddings()
+        if layer is not None:
+            return layer(input_ids)
     if isinstance(model, GPTJForCausalLM) or isinstance(model, GPT2LMHeadModel):
         return model.transformer.wte(input_ids).half()
     elif isinstance(model, LlamaForCausalLM) or isinstance(model, MistralForCausalLM):

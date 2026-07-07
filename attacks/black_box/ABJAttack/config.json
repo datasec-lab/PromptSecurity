@@ -1,7 +1,7 @@
 {
   "attack_method": "original_ABJ",
-  "assist_model_config": "judgers/usage_examples/configs/gpt_judger_harmful_binary.json",
+  "assist_model_config": "models/usage_examples/configs/api/gpt-4o-mini.json",
   "dataset_dir": "./dataset/harmful_behaviors.csv",
-  "attack_rounds": 3,
+  "attack_rounds": 5,
   "save_interval": 10
 }

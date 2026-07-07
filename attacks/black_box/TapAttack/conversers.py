@@ -4,28 +4,7 @@ from .language_models import WrappedModel
 from .common import extract_json, random_string
 import logging
 
-def extract_json(s):
-    """
-    The original code snippet had a function to parse
-    { "improvement": "...", "prompt": "..." } 
-    from a block of text.
-    (If you want, copy your old function here.)
-    """
-    import ast
-    start_pos = s.find("{")
-    if start_pos == -1:
-        return None, None
-    end_pos = s.find("}", start_pos)
-    if end_pos == -1:
-        return None, None
-    json_str = s[start_pos:end_pos+1]
-    try:
-        parsed = ast.literal_eval(json_str)
-        if not all(k in parsed for k in ["improvement", "prompt"]):
-            return None, None
-        return parsed, json_str
-    except:
-        return None, None
+logger = logging.getLogger(__name__)
 
 class AttackLLM:
     """
@@ -56,9 +35,12 @@ class AttackLLM:
         """
         assert len(convs_list) == len(prompts_list)
         batchsize = len(convs_list)
+        if batchsize == 0:
+            return []
 
         valid_outputs = [None] * batchsize
         indices_to_regenerate = list(range(batchsize))
+        last_failed_outputs = {}
 
         # We seed the partial JSON if needed
         init_message = """{"improvement": "","prompt": \""""  # as in the original
@@ -84,17 +66,26 @@ class AttackLLM:
             new_indices = []
             for i, out_text in enumerate(outputs):
                 orig_idx = indices_to_regenerate[i]
-                # Reconstruct full JSON
-                raw_json_text = init_message + out_text
-                parsed, json_str = extract_json(raw_json_text)
+                parsed, json_str = extract_json(out_text, continuation_prefix=init_message)
                 if parsed is not None:
                     valid_outputs[orig_idx] = parsed
                     convs_list[orig_idx].update_last_message(json_str)
                 else:
+                    last_failed_outputs[orig_idx] = (out_text or "")[:300].replace("\n", "\\n")
                     new_indices.append(orig_idx)
             indices_to_regenerate = new_indices
             if not indices_to_regenerate:
                 break
+
+        for orig_idx in indices_to_regenerate:
+            preview = last_failed_outputs.get(orig_idx, "")
+            logger.warning(
+                "TapAttack attacker output could not be parsed after %s attempts for stream %s. "
+                "Response preview: %s",
+                self.max_n_attack_attempts,
+                orig_idx + 1,
+                preview,
+            )
 
         return valid_outputs
 
