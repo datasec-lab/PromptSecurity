@@ -1,4 +1,15 @@
-# PromptSecurity CLI
+# PromptSecurity
+
+**A plug-in benchmark for LLM prompt security** — mix and match attacks, defenses, models,
+judgers, and datasets through a single CLI.
+
+<p>
+<a href="https://arxiv.org/abs/2510.15476"><img alt="Paper" src="https://img.shields.io/badge/paper-arXiv%3A2510.15476-b31b1b"></a>
+<a href="https://datasec-lab.github.io/PromptSecurityLeaderboard/"><img alt="Leaderboard" src="https://img.shields.io/badge/leaderboard-live-3f4fb0"></a>
+<a href="https://huggingface.co/datasets/youbin2014/JailbreakDB"><img alt="Dataset" src="https://img.shields.io/badge/dataset-JailbreakDB-ffcc4d"></a>
+<img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
+<a href="CONTRIBUTING.md"><img alt="Contributions welcome" src="https://img.shields.io/badge/contributions-welcome-158257"></a>
+</p>
 
 PromptSecurity is operated through a single CLI entrypoint: `python -m experiments`.
 The workflow is placeholder-first: the CLI creates placeholder JSON files, then
@@ -7,6 +18,43 @@ executes them. Results are stored under `experiments/placeholders/`.
 This public release includes the PromptSecurity evaluation framework and an
 evaluation-result dataset under `dataset/promptsecurity_eval/`. See
 `dataset/README.md` for the file layout, record counts, and loading examples.
+
+## Benchmark set
+
+Reported results (including the [leaderboard](https://datasec-lab.github.io/PromptSecurityLeaderboard/))
+are measured on **`balanced_challenge`** — a curated 100-sample set that mixes the hardest defense and
+attack cases, rather than the full source datasets. Run against it with:
+
+```bash
+python -m experiments --model gpt-4o --attack ArtPrompt --defense no_defense \
+  --dataset balanced_challenge --judger harmbench_judger
+```
+
+`harmbench` / `jbb` / `airbench` remain available as `--dataset` values for evaluating on the full
+source benchmarks.
+
+## Demo
+
+**▶ One attack, one defense, one verdict** — a real record walked end-to-end: a harmful
+request, the PersuasiveInContext attack that rewrites it, and the two outcomes that make
+the benchmark worth running — the undefended model is jailbroken (UNSAFE), while the same
+attack under a defense is blocked (SAFE). The harmful completion is withheld.
+
+<!-- Regenerate with:  python docs/make_demo_gif.py   (needs only Pillow) -->
+![PromptSecurity attack/defense pipeline demo](docs/demo.gif)
+
+<sub>Optional: `bash docs/record_demo.sh` records a separate terminal-walkthrough GIF
+(`docs/demo_cli.gif`) via asciinema + agg.</sub>
+
+**🔎 Evaluation Explorer** — a browsable page of real benchmark records: pick an attack, defense,
+and model and see how the prompt is transformed and how the judgers score it. Open
+[`docs/demo.html`](docs/demo.html) in a browser (or enable GitHub Pages for this repo to serve it).
+
+## Contributing
+
+New attacks, defenses, models, judgers, and datasets are welcome — each is a self-contained plug-in.
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for a 5-step "add a new attack" tutorial and the
+component contracts.
 
 ## Paper and Artifacts
 
