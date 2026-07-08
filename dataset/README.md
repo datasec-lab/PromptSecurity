@@ -6,6 +6,8 @@ PromptSecurity. It stores CSV measurements over configured
 metadata and the selected prompt sample.
 
 The public Hugging Face release is available at
+<https://huggingface.co/datasets/youbin2014/PromptSecurity-Eval>. The
+associated prompt corpus is released separately as JailbreakDB:
 <https://huggingface.co/datasets/youbin2014/JailbreakDB>.
 
 ## Contents

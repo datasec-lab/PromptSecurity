@@ -15,9 +15,10 @@ PromptSecurity is operated through a single CLI entrypoint: `python -m experimen
 The workflow is placeholder-first: the CLI creates placeholder JSON files, then
 executes them. Results are stored under `experiments/placeholders/`.
 
-This public release includes the PromptSecurity evaluation framework and an
-evaluation-result dataset under `dataset/promptsecurity_eval/`. See
-`dataset/README.md` for the file layout, record counts, and loading examples.
+This public release includes the PromptSecurity evaluation framework and a
+GitHub-safe copy of the evaluation-result dataset under
+`dataset/promptsecurity_eval/`. See `dataset/README.md` for the file layout,
+record counts, and loading examples.
 
 ## Benchmark set
 
@@ -60,7 +61,8 @@ component contracts.
 
 - Paper: [SoK: Taxonomy and Evaluation of Prompt Security in Large Language Models](https://arxiv.org/abs/2510.15476)
 - Code: [datasec-lab/PromptSecurity](https://github.com/datasec-lab/PromptSecurity)
-- Dataset: [youbin2014/JailbreakDB](https://huggingface.co/datasets/youbin2014/JailbreakDB)
+- Evaluation dataset: [youbin2014/PromptSecurity-Eval](https://huggingface.co/datasets/youbin2014/PromptSecurity-Eval)
+- Prompt corpus: [youbin2014/JailbreakDB](https://huggingface.co/datasets/youbin2014/JailbreakDB)
 - Interactive leaderboard: [PromptSecurityLeaderboard](https://datasec-lab.github.io/PromptSecurityLeaderboard/)
 
 If you use PromptSecurity, please cite:
