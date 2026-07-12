@@ -6,7 +6,8 @@ judgers, and datasets through a single CLI.
 <p>
 <a href="https://arxiv.org/abs/2510.15476"><img alt="Paper" src="https://img.shields.io/badge/paper-arXiv%3A2510.15476-b31b1b"></a>
 <a href="https://datasec-lab.github.io/PromptSecurityLeaderboard/"><img alt="Leaderboard" src="https://img.shields.io/badge/leaderboard-live-3f4fb0"></a>
-<a href="https://huggingface.co/datasets/youbin2014/JailbreakDB"><img alt="Dataset" src="https://img.shields.io/badge/dataset-JailbreakDB-ffcc4d"></a>
+<a href="https://huggingface.co/datasets/youbin2014/PromptSecurity-Eval"><img alt="PromptSecurity-Eval" src="https://img.shields.io/badge/eval-PromptSecurity--Eval-ffcc4d"></a>
+<a href="https://huggingface.co/datasets/youbin2014/JailbreakDB"><img alt="JailbreakDB" src="https://img.shields.io/badge/corpus-JailbreakDB-f08c00"></a>
 <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
 <a href="CONTRIBUTING.md"><img alt="Contributions welcome" src="https://img.shields.io/badge/contributions-welcome-158257"></a>
 </p>
