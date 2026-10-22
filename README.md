@@ -60,19 +60,21 @@ component contracts.
 
 ## Paper and Artifacts
 
-- Paper: [SoK: Taxonomy and Evaluation of Prompt Security in Large Language Models](https://arxiv.org/abs/2510.15476)
+- Paper: [SoK: Systematizing LLM Prompt Security: Taxonomies, Datasets, and Unified Evaluation of Attacks and Defenses](https://arxiv.org/abs/2510.15476) — accepted at the IEEE Symposium on Security and Privacy (S&P 2027, Cycle 1).
 - Code: [datasec-lab/PromptSecurity](https://github.com/datasec-lab/PromptSecurity)
 - Evaluation dataset: [youbin2014/PromptSecurity-Eval](https://huggingface.co/datasets/youbin2014/PromptSecurity-Eval)
 - Prompt corpus: [youbin2014/JailbreakDB](https://huggingface.co/datasets/youbin2014/JailbreakDB)
 - Interactive leaderboard: [PromptSecurityLeaderboard](https://datasec-lab.github.io/PromptSecurityLeaderboard/)
 
-If you use PromptSecurity, please cite:
+The latest arXiv preprint (v5, revised October 18, 2026) uses the same title and author order as the accepted paper. Earlier preprint versions used a different title. The citation below is for the arXiv preprint; its DOI is an arXiv DOI, not a proceedings DOI. The original citation key is retained for compatibility.
+
+If you use PromptSecurity, please cite the arXiv preprint:
 
 ```bibtex
 @misc{hong2025sokpromptsecurity,
-  title = {SoK: Taxonomy and Evaluation of Prompt Security in Large Language Models},
+  title = {SoK: Systematizing LLM Prompt Security: Taxonomies, Datasets, and Unified Evaluation of Attacks and Defenses},
   author = {Hong, Hanbin and Wu, Shuang and Feng, Shuya and Naderloui, Nima and Yan, Shenao and Zhang, Jingyu and Arastehfard, Ali and Huang, Heqing and Hong, Yuan},
-  year = {2025},
+  year = {2026},
   eprint = {2510.15476},
   archivePrefix = {arXiv},
   primaryClass = {cs.CR},
